@@ -63,8 +63,11 @@
       blind scan), and this gives it a "none of these" option instead of forcing those
       sounds into one of the trained keys.
     </p>
-    <div class="btn-row">
+    <div class="btn-row" style="align-items:center">
       <button id="btn-noise-collect-toggle" class="btn-primary">Start capturing</button>
+      <label style="font-size:12px;color:var(--muted);display:flex;gap:6px;align-items:center">
+        <input id="record-releases" type="checkbox" checked> Also store each key's release while recording
+      </label>
     </div>
     <p id="noise-count" style="font-size:12px;color:var(--muted);margin-top:6px">0 recorded</p>
   </div>

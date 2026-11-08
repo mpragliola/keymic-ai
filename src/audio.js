@@ -111,9 +111,16 @@ export class AudioCapture {
   // after. If the narrow search finds nothing, the wide window is tried too,
   // so a wrong calibration recovers instead of rejecting every press.
   //
+  // Once calibrated, the click chosen is the envelope peak above the threshold that is
+  // *closest to the measured latency*, not the loudest one: in normal typing a
+  // neighbouring keystroke (often the spacebar, the loudest key) falls inside the
+  // window, and taking the loudest peak would label this key with that one's sound.
+  //
+  // calibrate=false (used for key releases) leaves the latency estimate untouched.
+  //
   // Returns { audio, ...diagnostics }; audio is CAPTURE_MS starting
   // PRE_ONSET_MS before the click, or null if no peak reaches minPeakDb.
-  async captureKeystroke(eventTimeMs = performance.now()) {
+  async captureKeystroke(eventTimeMs = performance.now(), { calibrate = true } = {}) {
     const ms = t => Math.round(t * this.sr / 1000);
     const at = this.frameAt(eventTimeMs);
     const [r0, r1] = CFG.ANALYSIS_RANGE_MS;
@@ -136,14 +143,31 @@ export class AudioCapture {
       return { ms: r0 + bi, db: bd };
     };
 
+    // Local maxima of the envelope (±PEAK_SEPARATION_MS) above the threshold, nearest
+    // to `target` ms; falls back to the loudest point when none qualifies.
+    const findNearest = ([w0, w1], target) => {
+      const sep = CFG.PEAK_SEPARATION_MS;
+      const lo = Math.max(0, w0 - r0), hi = Math.min(envDb.length - 1, w1 - r0);
+      let best = null;
+      for (let i = lo; i <= hi; i++) {
+        if (envDb[i] < this.minPeakDb) continue;
+        let isMax = true;
+        for (let j = Math.max(0, i - sep); j <= Math.min(envDb.length - 1, i + sep) && isMax; j++)
+          if (envDb[j] > envDb[i]) isMax = false;
+        if (isMax && (!best || Math.abs(r0 + i - target) < Math.abs(best.ms - target)))
+          best = { ms: r0 + i, db: envDb[i] };
+      }
+      return best || findPeak([w0, w1]);
+    };
+
     const lat = this.latencyMs;
     let window = lat === null
       ? CFG.SEARCH_WINDOW_MS
       : [Math.round(lat - CFG.CALIBRATED_HALF_WINDOW_MS), Math.round(lat + CFG.CALIBRATED_HALF_WINDOW_MS)];
-    let peak = findPeak(window);
+    let peak = lat === null ? findPeak(window) : findNearest(window, lat);
     if (lat !== null && peak.db < this.minPeakDb) {
       window = CFG.SEARCH_WINDOW_MS;
-      peak = findPeak(window);
+      peak = findNearest(window, lat);
     }
 
     // The 5 ms *window* with the most energy scores highest once it fully contains the
@@ -158,8 +182,10 @@ export class AudioCapture {
                    threshold: this.minPeakDb, latencyMs: lat };
     if (peak.db < this.minPeakDb) return { audio: null, ...diag };
 
-    this.offsets.push(peak.ms);
-    if (this.offsets.length > CFG.CALIBRATION_HISTORY) this.offsets.shift();
+    if (calibrate) {
+      this.offsets.push(peak.ms);
+      if (this.offsets.length > CFG.CALIBRATION_HISTORY) this.offsets.shift();
+    }
     return { audio: this.readAbsolute(at + ms(peak.ms) - pre, clip), ...diag, latencyMs: this.latencyMs };
   }
 

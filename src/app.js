@@ -138,6 +138,14 @@ document.addEventListener('keydown', e => {
   else if (activeTab === 'predict' && state.micActive && state.model) predictKey(k, e.timeStamp);
 });
 
+document.addEventListener('keyup', e => {
+  if (e.target.matches?.('input, select, textarea')) return;
+  const k = e.key === ' ' ? ' ' : e.key.toLowerCase();
+  if (!TRACKED.has(k)) return;
+  const activeTab = document.querySelector('.tab-btn.active')?.dataset.tab;
+  if (activeTab === 'record' && state.micActive && recordReleasesInput.checked) recordRelease(e.timeStamp);
+});
+
 // ─── Capture stats ───────────────────────────────────────────────────────────
 // Shows the measured mic latency and how many presses were ignored.
 function updateCaptureStats(cut) {
@@ -217,6 +225,26 @@ async function recordKey(k, eventTime) {
   } catch (e) {
     flashKey(k, 'rejected');
     showRecordError('Not saved: ' + e.message);
+  }
+}
+
+// Stores a key's release sound under NOISE_KEY. Mic-only typing (Type tab) can't tell a
+// release from a press by timing alone once its minimum spacing is short enough for fast
+// typing, so the model learns releases as "not a keystroke" and they're dropped.
+// Uses the same click search as presses but doesn't touch the latency calibration.
+// A release too quiet to clear the threshold is simply skipped — not an error.
+const recordReleasesInput = document.getElementById('record-releases');
+
+async function recordRelease(eventTime) {
+  const cut = await state.audio.captureKeystroke(eventTime, { calibrate: false });
+  if (!cut.audio) return;
+  try {
+    const r = await api.addSamples(NOISE_KEY, state.audio.sr, cut.audio);
+    state.counts[NOISE_KEY] = r.count;
+    state.sr = state.audio.sr;
+    renderCounts();
+  } catch (e) {
+    showRecordError('Release not saved: ' + e.message);
   }
 }
 

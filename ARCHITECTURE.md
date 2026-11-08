@@ -51,8 +51,13 @@ Audio reaches the ring buffer later than the key event (processing chunk of
 4. takes the envelope peak inside the search window as the click. Before
    calibration the window is −100…+300 ms; once 5 clicks were accepted it
    narrows to ±80 ms around the **measured latency** (median event→click
-   offset of the last 20 clicks). If the narrow window finds nothing, the wide
-   one is searched too, so a wrong calibration corrects itself;
+   offset of the last 20 clicks), and the click taken is the envelope peak above
+   the threshold **closest to that latency**, not the loudest one — in normal
+   typing a neighbouring keystroke (often the spacebar, the loudest key) falls
+   inside the window, and taking the loudest peak labelled the key with that
+   neighbour's sound. Peaks closer than 15 ms count as one click. If the narrow
+   window finds nothing, the wide one is searched too, so a wrong calibration
+   corrects itself;
    the press is rejected if the peak is below the threshold (default 6 dB,
    adjustable on the Record tab, which also plots the envelope of the last press);
 5. refines that peak: a 5 ms energy window scores highest once it fully
@@ -98,9 +103,15 @@ with no need to re-record anything.
 The Type tab classifies keystrokes with no keyboard events at all —
 `AudioCapture.startBlindScan` runs a continuous trailing-window energy scan
 (hop, background window, and refractory period all in `src/config.js`,
-`BLIND_*`) instead of the keydown-anchored capture in §1.1.1, with a
+`BLIND_*`) instead of the keydown-anchored capture in §1.1.1, with a 50 ms
 refractory period after each detected click so its own decay tail isn't
-mistaken for a second click. Each detected click is sent to `/predict` the
+mistaken for a second click. That's short enough for fast typing — but it
+means a key's *release* (50–150 ms after the press) is detected as a click
+too. Releases are therefore recorded as non-keystroke sounds: while recording
+on the Record tab, each keyup's release sound is captured the same way as a
+press (without updating the latency calibration) and stored under `NOISE_KEY`,
+so the model learns to classify releases as "not a keystroke" and the Type
+tab drops them. Each detected click is sent to `/predict` the
 same way as the Predict tab.
 
 Because every loud sound in range gets classified as *something* — the

@@ -14,6 +14,7 @@ export const CFG = {
   CALIBRATED_HALF_WINDOW_MS: 80, // after calibration: ± this around the measured latency
   CALIBRATION_STROKES: 5,        // accepted clicks needed before latency counts as measured
   CALIBRATION_HISTORY: 20,       // latency = median offset of the last N clicks
+  PEAK_SEPARATION_MS: 15,        // envelope peaks closer than this count as one click
   MIN_PEAK_DB: 6,     // default click threshold (dB over background); adjustable in the UI
   BACKGROUND_PERCENTILE: 20, // background level = this percentile of the energy envelope
   DETECT_HIGHPASS_HZ: 800,   // click detection runs on high-passed audio (removes fan/hum/rumble)
@@ -22,7 +23,9 @@ export const CFG = {
   // Blind click detection (no keyboard event — "type via mic" mode)
   BLIND_HOP_MS:        15,  // how often the stream is scanned for a new click
   BLIND_BACKGROUND_MS: 400, // trailing window used to estimate the noise floor
-  BLIND_REFRACTORY_MS: 150, // minimum spacing between two accepted clicks
+  BLIND_REFRACTORY_MS:  50, // minimum spacing between two accepted clicks — short enough for
+                            // fast typing. Key releases get detected too; the model drops them
+                            // as non-keystroke sounds (recorded on keyup, see recordRelease in app.js)
   BLIND_PEAK_SEARCH_MS: 30, // once a threshold crossing fires, look this far ahead for the true peak
 
   // Samples-tab spectrogram previews only — the model's features are set in backend/keymic/config.py

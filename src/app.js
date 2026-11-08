@@ -391,7 +391,7 @@ function applyStatus(s) {
   for (const line of s.logs) log(line);
   state.train.logTotal = s.log_total;
   state.train.state = s.state;
-  drawChart(document.getElementById('train-chart'), { trainAcc: s.history.acc, valAcc: s.history.val_acc, totalEpochs: s.epochs });
+  drawChart(document.getElementById('train-chart'), { trainAcc: s.history.acc, valAcc: s.history.val_acc });
   const last = i => s.history[i].at(-1);
   document.getElementById('train-progress').textContent =
     s.state === 'idle' ? '' :

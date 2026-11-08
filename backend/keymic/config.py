@@ -15,7 +15,11 @@ FMIN_HZ     = 300   # mel filterbank range (Hz): below = rumble/hum, above = mos
 FMAX_HZ     = 16000
 FRAME_LEN   = 512   # STFT frame size (samples)
 HOP_LEN     = 128   # STFT hop size (samples)
-N_FRAMES    = 64    # fixed time-axis length fed to the CNN
+# Fixed time-axis length fed to the CNN. A FEATURE_MS=100 clip yields ~31-34 real STFT
+# frames (depending on sr: 44.1 vs 48 kHz) — N_FRAMES=64 (sized for the old 200ms window)
+# would zero-pad roughly half the input. 32 keeps padding to a frame or two either way,
+# and divides evenly by the three 2x poolings in model.py.
+N_FRAMES    = 32
 MAX_SAMPLES = 50    # per key; oldest samples are dropped beyond this
 MIN_SAMPLES = 8     # a key needs this many samples to be included in training
 MIN_KEYS    = 2     # training needs at least this many eligible keys

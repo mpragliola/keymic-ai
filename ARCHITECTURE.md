@@ -167,10 +167,13 @@ generalising across recording sessions.
 ### 1.6  Temporal alignment
 
 After normalisation, the time axis is padded with zeros or cropped to exactly
-**64 frames** (a 200 ms clip yields 72 frames at 48 kHz, so it is cropped).
-This fixes the CNN input shape.
+**32 frames**, fixing the CNN input shape. A `FEATURE_MS = 100` clip (§1.1.2) yields
+~31 real STFT frames at 44.1 kHz or ~34 at 48 kHz — `N_FRAMES` is set to 32 so padding
+never amounts to more than a frame or two either way. (It was 64 before `FEATURE_MS`
+existed, sized for the then-200ms window's ~72 frames; left at 64 after the crop to
+100ms, it would have padded roughly *half* the input with zeros.)
 
-**Final input tensor shape: `[64, 40, 1]`** (frames × mel-bands × channel).
+**Final input tensor shape: `[32, 40, 1]`** (frames × mel-bands × channel).
 
 ---
 
@@ -179,27 +182,30 @@ This fixes the CNN input shape.
 ### 2.1  Architecture
 
 ```
-Input          [64 × 40 × 1]
+Input          [32 × 40 × 1]
 
 Conv Block 1
   Conv2D        16 filters, 3×3, same padding
-  BatchNorm
-  ReLU
-  MaxPool2D     2×2 → [32 × 20 × 16]
+  BatchNorm · ReLU
+  Conv2D        16 filters, 3×3, same padding   (depth, not a second pooling stage)
+  BatchNorm · ReLU
+  MaxPool2D     2×2 → [16 × 20 × 16]
   Dropout2D     0.1
 
 Conv Block 2
   Conv2D        32 filters, 3×3, same padding
-  BatchNorm
-  ReLU
-  MaxPool2D     2×2 → [16 × 10 × 32]
+  BatchNorm · ReLU
+  Conv2D        32 filters, 3×3, same padding
+  BatchNorm · ReLU
+  MaxPool2D     2×2 → [8 × 10 × 32]
   Dropout2D     0.15
 
 Conv Block 3
   Conv2D        64 filters, 3×3, same padding
-  BatchNorm
-  ReLU
-  MaxPool2D     2×2 → [8 × 5 × 64]
+  BatchNorm · ReLU
+  Conv2D        64 filters, 3×3, same padding
+  BatchNorm · ReLU
+  MaxPool2D     2×2 → [4 × 5 × 64]
   Dropout2D     0.2
 
 GlobalAveragePooling2D  → [64]
@@ -210,11 +216,17 @@ Dropout         0.4
 Dense           N classes, Softmax
 ```
 
+A fourth pooling stage was deliberately not added — at a 32-frame input, three 2× poolings
+already leave only 4 frames; a fourth would leave 2, too little spatial extent for a 3×3
+kernel to mean much. The extra depth instead comes from a second 3×3 conv *within* each
+block (c_out → c_out, no further downsampling) — roughly 3x the conv parameters of the
+single-conv version this replaced, still small in absolute terms.
+
 ### 2.2  Design choices
 
 | Choice | Reason |
 |--------|--------|
-| Three conv blocks, 16→32→64 filters | Deliberately small — a per-user dataset is tens of clips per key, not thousands; a wider net (the original 32→64→128) memorizes the training set instead of generalizing |
+| Three conv blocks, 16→32→64 filters, two convs each | Deliberately small — a per-user dataset is tens of clips per key, not thousands; a wider net (the original 32→64→128, one conv each) memorizes the training set instead of generalizing. If a larger dataset (more keys, the noise class, more samples per key) starts showing §2.3's overfitting signature again, drop back to one conv per block before adding dropout or data |
 | Batch normalisation | Stabilises training and allows higher learning rates |
 | Dropout2D after every conv block | Drops whole feature maps during training, not individual pixels — regularises the conv stack itself, not just the dense head |
 | GlobalAveragePooling instead of Flatten | Reduces parameter count; more robust to slight temporal misalignment |
@@ -269,7 +281,11 @@ init). This only works if the key set is unchanged since that model was saved �
 with a 400 otherwise, since the output layer's size depends on the number of keys. The
 optimizer's own state (Adam's momentum) isn't carried over, and each run draws a fresh
 random train/validation split, so early stopping's `best_val_loss` always starts over at
-epoch 1 of the new run rather than continuing a curve from the old one.
+epoch 1 of the new run rather than continuing a curve from the old one. The key-set check
+only catches a changed *key set* — a model saved under a since-edited `KeystrokeCNN`
+(different layer sizes, same keys) fails `load_state_dict` with a shape mismatch instead;
+`_train` catches that `RuntimeError` and falls back to a fresh network with a logged
+explanation rather than crashing the run.
 
 ### 2.4  Persistence (backend)
 

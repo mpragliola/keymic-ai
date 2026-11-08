@@ -256,7 +256,14 @@ class Trainer:
 
         net = KeystrokeCNN(len(keys)).to(dev)
         if resume_state is not None:
-            net.load_state_dict(resume_state)   # warm start; optimizer state is not carried over
+            try:
+                net.load_state_dict(resume_state)   # warm start; optimizer state is not carried over
+            except RuntimeError as e:
+                # The saved model was trained under a since-changed architecture (e.g. a
+                # KeystrokeCNN edit) — same key set, incompatible shapes. Fall back to a
+                # fresh net rather than crashing the run.
+                self._log(f"Could not resume ({e}) — the saved model's architecture doesn't "
+                          f"match the current one. Starting from a fresh network instead.")
         opt = torch.optim.Adam(net.parameters(), lr=p.lr, weight_decay=C.WEIGHT_DECAY)
         loss_fn = nn.CrossEntropyLoss()
         t0 = time.perf_counter()

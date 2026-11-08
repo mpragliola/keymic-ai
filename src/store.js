@@ -6,7 +6,7 @@
 //   ks-{key}    ArrayBuffer   (concatenated Float32Array samples, raw PCM)
 //   ks-model-keys  JSON array of key strings the trained model covers
 
-import { CFG } from './config.js?v=11';
+import { CFG } from './config.js?v=14';
 
 const sampleLength = sr => Math.round(CFG.CAPTURE_MS * sr / 1000);
 
@@ -71,6 +71,10 @@ export const Store = {
     let off = 0;
     for (const s of samples) { buf.set(s, off); off += s.length; }
     await localforage.setItem(`ks-${key}`, buf.buffer);
+  },
+
+  async removeKey(key) {
+    await localforage.removeItem(`ks-${key}`);
   },
 
   // ─── Model keys ──────────────────────────────────────────────

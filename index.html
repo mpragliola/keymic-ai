@@ -31,6 +31,7 @@
 <!-- ── Tabs ───────────────────────────────────────────────────────────────── -->
 <div class="tabs">
   <button class="tab-btn active" data-tab="record">📡 Record</button>
+  <button class="tab-btn"        data-tab="samples">🔍 Samples</button>
   <button class="tab-btn"        data-tab="train">🧠 Train</button>
   <button class="tab-btn"        data-tab="predict">🎯 Predict</button>
 </div>
@@ -49,6 +50,19 @@
   </div>
 
   <div class="card">
+    <div class="card-title">Last press — energy around the key event (ms)</div>
+    <canvas id="capture-view" style="width:100%;height:110px;display:block;background:var(--bg);border-radius:4px"></canvas>
+    <p style="font-size:12px;color:var(--muted);margin-top:8px">
+      Shaded: search window · grey: key event · dashed: threshold · green/red: click kept/ignored
+    </p>
+    <label style="display:flex;gap:10px;align-items:center;font-size:12px;color:var(--muted);margin-top:8px">
+      Click threshold
+      <input id="threshold" type="range" min="2" max="20" step="1" style="flex:1">
+      <span id="threshold-val" style="font-family:var(--mono);width:44px"></span>
+    </label>
+  </div>
+
+  <div class="card">
     <div class="card-title">Keyboard — type keys to record</div>
     <div id="keyboard"></div>
   </div>
@@ -64,6 +78,24 @@
     </p>
   </div>
 
+</div>
+
+<!-- ══ Samples panel ════════════════════════════════════════════════════════ -->
+<div id="tab-samples" class="tab-panel">
+  <div class="card">
+    <div class="card-title">Recorded samples — newest first</div>
+    <div class="btn-row" style="align-items:center">
+      <select id="samples-key" class="samples-select"></select>
+      <button id="samples-prev" class="btn-ghost">← Prev</button>
+      <span id="samples-page" style="color:var(--muted);font-size:12px"></span>
+      <button id="samples-next" class="btn-ghost">Next →</button>
+    </div>
+    <p style="margin-top:10px;color:var(--muted);font-size:12px">
+      Waveform (scaled to each clip's peak; orange line = where the click should start) and the
+      log-mel spectrogram the model sees. A good sample has its click at the orange line.
+    </p>
+  </div>
+  <div id="samples-grid" class="samples-grid"></div>
 </div>
 
 <!-- ══ Train panel ════════════════════════════════════════════════════════════ -->
@@ -125,7 +157,7 @@
 </div>
 
 <!-- App entry point (ES module) -->
-<script type="module" src="src/app.js?v=11"></script>
+<script type="module" src="src/app.js?v=14"></script>
 
 </body>
 </html>

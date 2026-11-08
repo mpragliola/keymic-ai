@@ -1,14 +1,15 @@
-import { CFG, KEYBOARD_ROWS, TRACKED } from './config.js?v=11';
-import { AudioCapture } from './audio.js?v=11';
-import { getFilterbank, computeMelSpec } from './features.js?v=11';
-import { Store } from './store.js?v=11';
-import { trainFromStore, loadSavedModel, deleteSavedModel } from './model.js?v=11';
+import { CFG, KEYBOARD_ROWS, TRACKED } from './config.js?v=14';
+import { AudioCapture } from './audio.js?v=14';
+import { getFilterbank, computeMelSpec } from './features.js?v=14';
+import { Store } from './store.js?v=14';
+import { initSamplesTab } from './samples.js?v=14';
+import { trainFromStore, loadSavedModel, deleteSavedModel } from './model.js?v=14';
 import {
   setBadge, log, clearLog,
   buildKeyboardDOM, updateKeyboard, flashKey, updateRecordStats,
-  drawWaveform, drawChart,
+  drawWaveform, drawChart, drawCapture,
   renderConfidence, updatePredDisplay, updatePredStats, prependHistory,
-} from './ui.js?v=11';
+} from './ui.js?v=14';
 
 // ─── Shared state ─────────────────────────────────────────────────────────────
 const state = {
@@ -35,6 +36,7 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
     document.querySelectorAll('.tab-panel').forEach(p => p.classList.toggle('active', p.id === `tab-${target}`));
     if (target === 'record') startWaveformLoop();
     else stopWaveformLoop();
+    if (target === 'samples') samplesTab.refresh();
     if (target === 'predict') {
       updatePredStatus();
       if (state.model && !state.micActive) startMic();
@@ -50,6 +52,7 @@ async function startMic() {
   try {
     state.audio = new AudioCapture();
     await state.audio.init();
+    state.audio.minPeakDb = Number(thresholdInput.value);
     state.micActive = true;
     setBadge('badge-mic', 'mic on', 'green');
     startWaveformLoop();
@@ -81,6 +84,25 @@ function updatePredStatus() {
 }
 
 document.getElementById('btn-mic').addEventListener('click', startMic);
+
+// ─── Click threshold ─────────────────────────────────────────────────────────
+// Persisted per browser; localStorage can throw (e.g. storage disabled).
+const thresholdInput = document.getElementById('threshold');
+function loadThreshold() {
+  try { const v = Number(localStorage.getItem('keymic-threshold-db')); if (v) return v; } catch {}
+  return CFG.MIN_PEAK_DB;
+}
+function applyThreshold(db) {
+  thresholdInput.value = db;
+  document.getElementById('threshold-val').textContent = `${db} dB`;
+  if (state.audio) state.audio.minPeakDb = db;
+}
+thresholdInput.addEventListener('input', () => {
+  const db = Number(thresholdInput.value);
+  applyThreshold(db);
+  try { localStorage.setItem('keymic-threshold-db', String(db)); } catch {}
+});
+applyThreshold(loadThreshold());
 document.getElementById('btn-mic-predict').addEventListener('click', startMic);
 
 // ─── Waveform animation ───────────────────────────────────────────────────────
@@ -122,6 +144,7 @@ document.addEventListener('keydown', e => {
 // Shows the measured mic latency and how many presses were ignored.
 function updateCaptureStats(cut) {
   if (!cut.audio) state.rejected++;
+  drawCapture(document.getElementById('capture-view'), cut);
   const lat = cut.latencyMs;
   const el = document.getElementById('capture-stats');
   el.textContent =
@@ -129,6 +152,44 @@ function updateCaptureStats(cut) {
     ` · last click ${cut.peakDb.toFixed(0)} dB over background` +
     (state.rejected ? ` · ${state.rejected} press${state.rejected > 1 ? 'es' : ''} ignored (no click)` : '');
 }
+
+// ─── Sample access ───────────────────────────────────────────────────────────
+// Samples persisted in earlier sessions are loaded before use, so writes save
+// the full set instead of overwriting it with this session only. One shared
+// load promise per key: rapid repeat presses must not each load (and then
+// overwrite) the stored set independently.
+async function getKeySamples(k) {
+  if (!state.samples[k]) {
+    state.loading[k] ??= Store.loadKey(k);
+    const loaded = await state.loading[k];
+    state.samples[k] ??= loaded;
+  }
+  return state.samples[k];
+}
+
+async function deleteSample(k, index) {
+  const arr = await getKeySamples(k);
+  arr.splice(index, 1);
+  if (arr.length) {
+    state.counts[k] = arr.length;
+    await Store.saveKey(k, arr);
+  } else {
+    delete state.counts[k];
+    await Store.removeKey(k);
+  }
+  await Store.setCounts(state.counts);
+  updateKeyboard(state.counts);
+  updateRecordStats(state.counts);
+}
+
+const samplesTab = initSamplesTab({
+  getCounts:  () => state.counts,
+  getSamples: getKeySamples,
+  deleteSample,
+  getSr:      () => Store.getSr(),
+  getFilterbank,
+  computeMelSpec,
+});
 
 // ─── Record ───────────────────────────────────────────────────────────────────
 async function recordKey(k, eventTime) {
@@ -138,15 +199,7 @@ async function recordKey(k, eventTime) {
   flashKey(k, 'recording');
   const audio = cut.audio;
 
-  // Load samples persisted in earlier sessions before appending, so saveKey
-  // writes the full set instead of overwriting it with this session only.
-  // One shared load promise per key: rapid repeat presses must not each load
-  // (and then overwrite) the stored set independently.
-  if (!state.samples[k]) {
-    state.loading[k] ??= Store.loadKey(k);
-    const loaded = await state.loading[k];
-    state.samples[k] ??= loaded;
-  }
+  await getKeySamples(k);
   if (state.samples[k].length >= CFG.MAX_SAMPLES) state.samples[k].shift();
   state.samples[k].push(audio);
   state.counts[k] = state.samples[k].length;

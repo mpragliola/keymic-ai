@@ -4,15 +4,20 @@ export const CFG = {
   // Audio capture
   CAPTURE_MS:  200,   // clip length per keystroke (ms)
   PRE_ONSET_MS: 20,   // clip starts this long before the detected click
-  SEARCH_WINDOW_MS: [-50, 300],  // click search window around the key event, before calibration
-  CALIBRATED_HALF_WINDOW_MS: 60, // after calibration: ± this around the measured latency
+  ANALYSIS_RANGE_MS: [-250, 400], // audio analysed around each key event (and shown in the capture view)
+  SEARCH_WINDOW_MS: [-100, 300],  // click search window around the key event, before calibration
+  CALIBRATED_HALF_WINDOW_MS: 80, // after calibration: ± this around the measured latency
   CALIBRATION_STROKES: 5,        // accepted clicks needed before latency counts as measured
   CALIBRATION_HISTORY: 20,       // latency = median offset of the last N clicks
-  MIN_PEAK_DB: 10,    // click must be this much above background energy, else the press is ignored
+  MIN_PEAK_DB: 6,     // default click threshold (dB over background); adjustable in the UI
+  BACKGROUND_PERCENTILE: 20,
+  DETECT_HIGHPASS_HZ: 800,   // click detection runs on high-passed audio (removes fan/hum/rumble)  // background level = this percentile of the energy envelope
   RING_S:        4,   // ring buffer depth (seconds)
 
   // Feature extraction
   N_MELS:       40,   // mel filterbank bands
+  FMIN_HZ:     300,   // mel filterbank range: below = rumble/hum, above = mostly mic hiss
+  FMAX_HZ:   16000,
   FRAME_LEN:   512,   // STFT frame size (samples)
   HOP_LEN:     128,   // STFT hop size (samples)
   N_FRAMES:     64,   // fixed time-axis length fed to the CNN

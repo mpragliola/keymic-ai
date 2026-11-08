@@ -32,12 +32,17 @@ Audio reaches the ring buffer later than the key event (processing chunk of
 1. maps the event's `timeStamp` to an absolute stream frame (frames written so
    far + time since the last chunk);
 2. waits until the audio after the event has arrived;
-3. searches a window around the event for the click — the peak of short-time
-   energy (5 ms windows, 1 ms hop). Before calibration the window is
-   −50…+300 ms; once 5 clicks were accepted it narrows to ±60 ms around the
-   **measured latency** (median event→click offset of the last 20 clicks);
-4. rejects the press if the peak is < 10 dB above the background (median
-   energy of the window plus 150 ms before it);
+3. high-passes −250…+400 ms of audio around the event (4th-order
+   Butterworth, 800 Hz) so fans, hum and rumble don't mask the click, and
+   computes a short-time energy envelope (5 ms windows, 1 ms hop) in dB above
+   the background (20th percentile of the envelope);
+4. takes the envelope peak inside the search window as the click. Before
+   calibration the window is −100…+300 ms; once 5 clicks were accepted it
+   narrows to ±80 ms around the **measured latency** (median event→click
+   offset of the last 20 clicks). If the narrow window finds nothing, the wide
+   one is searched too, so a wrong calibration corrects itself;
+   the press is rejected if the peak is below the threshold (default 6 dB,
+   adjustable on the Record tab, which also plots the envelope of the last press);
 5. returns 200 ms starting 20 ms before the peak, so every clip has its click
    at the same position.
 
@@ -55,7 +60,12 @@ Each 200 ms window is framed with:
 ### 1.3  Mel filterbank
 
 The power spectrum (257 bins) is projected onto **40 triangular mel-scale
-filters** (`buildFilterbank`) represented as a `[257 × 40]` matrix.
+filters spanning 300 Hz – 16 kHz** (`buildFilterbank`) represented as a
+`[257 × 40]` matrix. Below 300 Hz is rumble and mains hum; above 16 kHz is
+mostly microphone hiss. Restricting the range keeps that noise out of the
+features and out of the per-spectrogram normalisation. Stored clips are
+unfiltered, so the range can change without re-recording (but requires
+retraining).
 Matrix-multiplication (`tf.matMul`) produces one mel-energy vector per frame.
 
 Mel scale formula:
@@ -196,7 +206,8 @@ F:/dev/keymic/
 │   ├── features.js       Mel filterbank (singleton) + computeMelSpec
 │   ├── store.js          IndexedDB persistence layer (localForage wrapper)
 │   ├── model.js          buildModel · trainFromStore · loadSavedModel · deleteSavedModel
-│   ├── ui.js             All DOM helpers (badges, keyboard, charts, etc.)
+│   ├── ui.js             All DOM helpers (badges, keyboard, charts, capture view)
+│   ├── samples.js        Samples tab: paginated clip browser (waveform, spectrogram, play, delete)
 │   └── app.js            Application orchestrator — state, event handlers
 ├── backend/              Python GPU backend (see backend/README.md)
 └── ARCHITECTURE.md       This document

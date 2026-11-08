@@ -19,8 +19,9 @@ python -m http.server 8080
 A local server is required (ES modules and microphone access don't work on `file://`).
 
 1. **Record** — enable the mic and press each key you want learned (≥ 8 times; 15–30 is better).
-2. **Train** — start, stop at any time, or delete the model.
-3. **Predict** — type; the guess, the real key and the top confidences are shown.
+2. **Samples** — browse each key's clips (waveform, spectrogram, playback), delete bad ones.
+3. **Train** — start, stop at any time, or delete the model.
+4. **Predict** — type; the guess, the real key and the top confidences are shown.
 
 ## Run the backend
 

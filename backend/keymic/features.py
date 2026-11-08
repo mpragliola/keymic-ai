@@ -11,12 +11,13 @@ import torch.nn.functional as F
 from . import config as C
 
 
-def mel_filterbank(n_mels: int, fft_len: int, sr: int) -> np.ndarray:
-    """[n_fft_bins, n_mels] matrix of triangular mel filters (same construction as the JS version)."""
+def mel_filterbank(n_mels: int, fft_len: int, sr: int,
+                   fmin: float = C.FMIN_HZ, fmax: float = C.FMAX_HZ) -> np.ndarray:
+    """[n_fft_bins, n_mels] triangular mel filters spanning fmin…fmax Hz (same construction as the JS version)."""
     n_bins = fft_len // 2 + 1
     to_mel = lambda hz: 2595.0 * np.log10(1.0 + hz / 700.0)
     from_mel = lambda m: 700.0 * (10.0 ** (m / 2595.0) - 1.0)
-    mel_min, mel_max = to_mel(0.0), to_mel(sr / 2)
+    mel_min, mel_max = to_mel(float(fmin)), to_mel(min(float(fmax), sr / 2))
 
     # n_mels + 2 evenly spaced mel points, converted to FFT bin indices
     pts = [int(np.floor((fft_len + 1) * from_mel(mel_min + i * (mel_max - mel_min) / (n_mels + 1)) / sr))

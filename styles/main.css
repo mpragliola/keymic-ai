@@ -320,3 +320,20 @@ button:disabled { opacity: .4; cursor: default; }
 .hist-row.correct .hist-pred { color: var(--success); }
 .hist-row.wrong   .hist-pred { color: var(--danger);  }
 .hist-probs  { color: var(--muted); margin-left: auto; font-family: var(--mono); }
+
+/* ── Samples tab ─────────────────────────────────────────── */
+.samples-select {
+  background: var(--bg); color: var(--text); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 6px 10px; font-family: var(--mono);
+}
+.samples-grid {
+  display: grid; gap: 12px;
+  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+}
+.sample-card {
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 10px; display: flex; flex-direction: column; gap: 6px;
+}
+.sample-head { display: flex; justify-content: space-between; font-family: var(--mono); font-size: 11px; color: var(--muted); }
+.sample-wave, .sample-spec { width: 100%; height: 56px; display: block; border-radius: 4px; }
+.sample-card button { padding: 4px 10px; font-size: 12px; }

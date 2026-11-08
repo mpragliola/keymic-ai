@@ -116,9 +116,10 @@ The Type tab classifies keystrokes with no keyboard events at all —
 refractory period after each detected click so its own decay tail isn't
 mistaken for a second click. That's short enough for fast typing — but it
 means a key's *release* (50–150 ms after the press) is detected as a click
-too. Releases are therefore recorded as non-keystroke sounds: while recording
-on the Record tab, each keyup's release sound is captured the same way as a
-press (without updating the latency calibration) and stored under `NOISE_KEY`,
+too. Releases can therefore be recorded as non-keystroke sounds, but only when
+the user opts in (the Record tab's "Also store key releases" checkbox, off by
+default): each keyup's release sound is then captured the same way as a press
+(without updating the latency calibration) and stored under `NOISE_KEY`,
 so the model learns to classify releases as "not a keystroke" and the Type
 tab drops them. Each detected click is sent to `/predict` the
 same way as the Predict tab.

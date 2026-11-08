@@ -138,7 +138,7 @@ document.addEventListener('keydown', e => {
   if (e.repeat) return;   // held key: auto-repeat events have no new sound
 
   const activeTab = document.querySelector('.tab-btn.active')?.dataset.tab;
-  if (activeTab === 'record' && state.micActive) recordKey(k, e.timeStamp);
+  if (activeTab === 'record' && state.micActive && !state.collectingNoise) recordKey(k, e.timeStamp);   // capturing noise: the scan hears this key too, don't store it twice
   else if (activeTab === 'predict' && state.micActive && state.model) predictKey(k, e.timeStamp);
 });
 
@@ -146,7 +146,7 @@ document.addEventListener('keyup', e => {
   if (e.target.matches?.('input, select, textarea')) return;
   if (!tracked.has(keyChar(e.code))) return;
   const activeTab = document.querySelector('.tab-btn.active')?.dataset.tab;
-  if (activeTab === 'record' && state.micActive && recordReleasesInput.checked) recordRelease(e.timeStamp);
+  if (activeTab === 'record' && state.micActive && !state.collectingNoise && recordReleasesInput.checked) recordRelease(e.timeStamp);
 });
 
 // ─── Capture stats ───────────────────────────────────────────────────────────

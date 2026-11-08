@@ -6,7 +6,7 @@
 //   ks-{key}    ArrayBuffer   (concatenated Float32Array samples, raw PCM)
 //   ks-model-keys  JSON array of key strings the trained model covers
 
-import { CFG } from './config.js?v=9';
+import { CFG } from './config.js?v=11';
 
 const sampleLength = sr => Math.round(CFG.CAPTURE_MS * sr / 1000);
 

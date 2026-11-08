@@ -1,6 +1,6 @@
-import { CFG } from './config.js?v=9';
-import { getFilterbank, computeMelSpec } from './features.js?v=9';
-import { Store } from './store.js?v=9';
+import { CFG } from './config.js?v=11';
+import { getFilterbank, computeMelSpec } from './features.js?v=11';
+import { Store } from './store.js?v=11';
 
 // ─── Build the CNN ────────────────────────────────────────────────────────────
 // Architecture:

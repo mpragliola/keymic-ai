@@ -20,7 +20,26 @@ Raw audio → 2-D image that the CNN can learn from.
 | API | `navigator.mediaDevices.getUserMedia` |
 | Processing flags | `echoCancellation: false`, `noiseSuppression: false`, `autoGainControl: false` — raw signal only |
 | Ring buffer | `Float32Array`, depth 4 s, written by a `ScriptProcessorNode` (chosen over `AudioWorklet` to avoid the HTTPS requirement) |
-| Snapshot | `extract(delayMs, durationMs)` reads 200 ms of audio ending at the desired past moment |
+| Keystroke cut | see §1.1.1 |
+
+#### 1.1.1  Cutting the keystroke clip
+
+Audio reaches the ring buffer later than the key event (processing chunk of
+2048 frames + device input latency), so the clip can't simply be "the last
+200 ms" at keydown — that window would end before the click arrives.
+`AudioCapture.captureKeystroke` instead:
+
+1. maps the event's `timeStamp` to an absolute stream frame (frames written so
+   far + time since the last chunk);
+2. waits until the audio after the event has arrived;
+3. searches a window around the event for the click — the peak of short-time
+   energy (5 ms windows, 1 ms hop). Before calibration the window is
+   −50…+300 ms; once 5 clicks were accepted it narrows to ±60 ms around the
+   **measured latency** (median event→click offset of the last 20 clicks);
+4. rejects the press if the peak is < 10 dB above the background (median
+   energy of the window plus 150 ms before it);
+5. returns 200 ms starting 20 ms before the peak, so every clip has its click
+   at the same position.
 
 ### 1.2  STFT
 

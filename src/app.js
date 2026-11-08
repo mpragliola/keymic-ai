@@ -1,14 +1,14 @@
-import { CFG, KEYBOARD_ROWS, TRACKED } from './config.js?v=9';
-import { AudioCapture } from './audio.js?v=9';
-import { getFilterbank, computeMelSpec } from './features.js?v=9';
-import { Store } from './store.js?v=9';
-import { trainFromStore, loadSavedModel, deleteSavedModel } from './model.js?v=9';
+import { CFG, KEYBOARD_ROWS, TRACKED } from './config.js?v=11';
+import { AudioCapture } from './audio.js?v=11';
+import { getFilterbank, computeMelSpec } from './features.js?v=11';
+import { Store } from './store.js?v=11';
+import { trainFromStore, loadSavedModel, deleteSavedModel } from './model.js?v=11';
 import {
   setBadge, log, clearLog,
   buildKeyboardDOM, updateKeyboard, flashKey, updateRecordStats,
   drawWaveform, drawChart,
   renderConfidence, updatePredDisplay, updatePredStats, prependHistory,
-} from './ui.js?v=9';
+} from './ui.js?v=11';
 
 // ─── Shared state ─────────────────────────────────────────────────────────────
 const state = {
@@ -23,6 +23,7 @@ const state = {
   predCorrect:  0,
   chartData:    { trainAcc: [], valAcc: [] },
   animFrame:    null,
+  rejected:     0,        // presses ignored because no click was detected
   trainAbort:   null,     // AbortController of the running training, if any
 };
 
@@ -105,20 +106,37 @@ document.addEventListener('keydown', e => {
   const k = e.key === ' ' ? ' ' : e.key.toLowerCase();
   if (!TRACKED.has(k)) return;
   e.preventDefault();
+  if (e.repeat) return;   // held key: auto-repeat events have no new sound
 
   // Determine current mode
   const activeTab = document.querySelector('.tab-btn.active')?.dataset.tab;
 
   if (activeTab === 'record' && state.micActive) {
-    setTimeout(() => recordKey(k), 25);
+    recordKey(k, e.timeStamp);
   } else if (activeTab === 'predict' && state.model) {
-    setTimeout(() => predictKey(k), 25);
+    predictKey(k, e.timeStamp);
   }
 });
 
+// ─── Capture stats ───────────────────────────────────────────────────────────
+// Shows the measured mic latency and how many presses were ignored.
+function updateCaptureStats(cut) {
+  if (!cut.audio) state.rejected++;
+  const lat = cut.latencyMs;
+  const el = document.getElementById('capture-stats');
+  el.textContent =
+    (lat === null ? 'Latency: calibrating…' : `Latency: ${Math.round(lat)} ms`) +
+    ` · last click ${cut.peakDb.toFixed(0)} dB over background` +
+    (state.rejected ? ` · ${state.rejected} press${state.rejected > 1 ? 'es' : ''} ignored (no click)` : '');
+}
+
 // ─── Record ───────────────────────────────────────────────────────────────────
-async function recordKey(k) {
-  const audio = state.audio.extract(0, CFG.CAPTURE_MS);
+async function recordKey(k, eventTime) {
+  const cut = await state.audio.captureKeystroke(eventTime);
+  updateCaptureStats(cut);
+  if (!cut.audio) { flashKey(k, 'rejected'); return; }
+  flashKey(k, 'recording');
+  const audio = cut.audio;
 
   // Load samples persisted in earlier sessions before appending, so saveKey
   // writes the full set instead of overwriting it with this session only.
@@ -133,7 +151,6 @@ async function recordKey(k) {
   state.samples[k].push(audio);
   state.counts[k] = state.samples[k].length;
 
-  flashKey(k, 'recording');
   updateKeyboard(state.counts);
   updateRecordStats(state.counts);
 
@@ -144,9 +161,16 @@ async function recordKey(k) {
 }
 
 // ─── Predict ─────────────────────────────────────────────────────────────────
-async function predictKey(actualKey) {
+async function predictKey(actualKey, eventTime) {
   if (!state.model || !state.micActive) return;
-  const audio = state.audio.extract(0, CFG.CAPTURE_MS);
+  const cut = await state.audio.captureKeystroke(eventTime);
+  updateCaptureStats(cut);
+  if (!cut.audio) {
+    document.getElementById('pred-status').textContent = 'No keystroke sound detected — press ignored.';
+    return;
+  }
+  updatePredStatus();
+  const audio = cut.audio;
   const fb    = getFilterbank(state.audio.sr);
   const spec  = computeMelSpec(audio, fb);
   const input = spec.expandDims(0);               // [1, N_FRAMES, N_MELS, 1]

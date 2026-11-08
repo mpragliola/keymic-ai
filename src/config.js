@@ -2,7 +2,13 @@
 
 export const CFG = {
   // Audio capture
-  CAPTURE_MS:  200,   // window length to extract per keystroke (ms)
+  CAPTURE_MS:  200,   // clip length per keystroke (ms)
+  PRE_ONSET_MS: 20,   // clip starts this long before the detected click
+  SEARCH_WINDOW_MS: [-50, 300],  // click search window around the key event, before calibration
+  CALIBRATED_HALF_WINDOW_MS: 60, // after calibration: ± this around the measured latency
+  CALIBRATION_STROKES: 5,        // accepted clicks needed before latency counts as measured
+  CALIBRATION_HISTORY: 20,       // latency = median offset of the last N clicks
+  MIN_PEAK_DB: 10,    // click must be this much above background energy, else the press is ignored
   RING_S:        4,   // ring buffer depth (seconds)
 
   // Feature extraction

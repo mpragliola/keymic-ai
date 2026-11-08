@@ -180,6 +180,7 @@ button:disabled { opacity: .4; cursor: default; }
 .kb-key.has-data  { border-color: var(--success); background: rgba(62,207,142,.07); }
 .kb-key.partial   { border-color: var(--warning); background: rgba(245,166,35,.07); }
 .kb-key.recording { background: rgba(91,141,239,.25) !important; transform: scale(.94); }
+.kb-key.rejected  { background: rgba(224,82,82,.30) !important; border-color: var(--danger) !important; }
 .kb-key.predicting{ background: rgba(62,207,142,.25) !important; transform: scale(.94); }
 
 /* ── Train tab ───────────────────────────────────────────── */

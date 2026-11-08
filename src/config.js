@@ -19,6 +19,12 @@ export const CFG = {
   DETECT_HIGHPASS_HZ: 800,   // click detection runs on high-passed audio (removes fan/hum/rumble)
   RING_S:        4,   // ring buffer depth (seconds)
 
+  // Blind click detection (no keyboard event — "type via mic" mode)
+  BLIND_HOP_MS:        15,  // how often the stream is scanned for a new click
+  BLIND_BACKGROUND_MS: 400, // trailing window used to estimate the noise floor
+  BLIND_REFRACTORY_MS: 150, // minimum spacing between two accepted clicks
+  BLIND_PEAK_SEARCH_MS: 30, // once a threshold crossing fires, look this far ahead for the true peak
+
   // Feature extraction
   N_MELS:       40,   // mel filterbank bands
   FMIN_HZ:     300,   // mel filterbank range: below = rumble/hum, above = mostly mic hiss

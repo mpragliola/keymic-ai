@@ -1,4 +1,4 @@
-import { CFG, KEYBOARD_ROWS, TRACKED } from './config.js?v=15';
+import { CFG, KEYBOARD_ROWS, TRACKED, displayKey } from './config.js?v=15';
 import { AudioCapture } from './audio.js?v=15';
 import { getFilterbank, computeMelSpec } from './features.js?v=15';
 import { api } from './api.js?v=15';
@@ -27,6 +27,7 @@ const state = {
   predCorrect: 0,
   animFrame:   null,
   rejected:    0,        // presses ignored because no click was detected
+  typing:      false,    // blind mic-only typing (Type tab) is active
 };
 
 const isActive = s => s === 'running' || s === 'stopping';
@@ -45,6 +46,8 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
       updatePredStatus();
       if (state.model && !state.micActive) startMic();
     }
+    if (target === 'type') updateTypeStatus();
+    else if (state.typing) stopTyping();   // leaving the tab stops blind scanning
   });
 });
 
@@ -68,19 +71,22 @@ async function startMic() {
   } finally {
     updateMicButtons();
     updatePredStatus();
+    updateTypeStatus();
   }
 }
 
 function updateMicButtons() {
-  for (const id of ['btn-mic', 'btn-mic-predict']) {
+  for (const id of ['btn-mic', 'btn-mic-predict', 'btn-mic-type']) {
     const b = document.getElementById(id);
     b.disabled = state.micActive;
     b.textContent = state.micActive ? 'Mic on' : 'Enable mic';
   }
+  document.getElementById('btn-type-toggle').disabled = !state.micActive || !state.model;
 }
 
 document.getElementById('btn-mic').addEventListener('click', startMic);
 document.getElementById('btn-mic-predict').addEventListener('click', startMic);
+document.getElementById('btn-mic-type').addEventListener('click', startMic);
 
 // ─── Click threshold ─────────────────────────────────────────────────────────
 // Persisted per browser; localStorage can throw (e.g. storage disabled).
@@ -248,6 +254,52 @@ async function predictKey(actualKey, eventTime) {
   prependHistory(document.getElementById('pred-history'), actualKey, r.key, probs, keys);
 }
 
+// ─── Type (mic-only — no keyboard events, the acoustic click is the only signal) ──
+function updateTypeStatus() {
+  const el = document.getElementById('type-status');
+  if (!state.backend)        el.textContent = 'Backend offline — start it with "python run.py" in backend/.';
+  else if (!state.model)     el.textContent = 'No trained model — train one in the Train tab.';
+  else if (!state.micActive) el.textContent = 'Enable the mic, then start listening.';
+  else if (state.model.sr !== state.audio.sr)
+    el.textContent = `Model was trained at ${state.model.sr / 1000} kHz but the mic runs at ${state.audio.sr / 1000} kHz.`;
+  else el.textContent = state.typing ? 'Listening — every click above the threshold is classified.' : '';
+  updateMicButtons();
+}
+
+function onBlindClick(cut) {
+  api.predict(state.audio.sr, cut.audio).then(r => {
+    document.getElementById('type-last-key').textContent = displayKey(r.key);
+    renderConfidence(document.getElementById('type-conf-bars'), r.probs.map(p => p.p), r.probs.map(p => p.key));
+    const out = document.getElementById('type-output');
+    out.value += r.key;
+    out.scrollTop = out.scrollHeight;
+  }).catch(e => {
+    document.getElementById('type-status').textContent = 'Prediction failed: ' + e.message;
+  });
+}
+
+const btnTypeToggle = document.getElementById('btn-type-toggle');
+
+function startTyping() {
+  state.typing = true;
+  btnTypeToggle.textContent = 'Stop listening';
+  state.audio.startBlindScan(onBlindClick);
+  updateTypeStatus();
+}
+
+async function stopTyping() {
+  if (!state.typing) return;
+  state.typing = false;
+  btnTypeToggle.textContent = 'Start listening';
+  await state.audio.stopBlindScan();
+  updateTypeStatus();
+}
+
+btnTypeToggle.addEventListener('click', () => (state.typing ? stopTyping() : startTyping()));
+document.getElementById('btn-type-clear').addEventListener('click', () => {
+  document.getElementById('type-output').value = '';
+});
+
 document.getElementById('btn-reset-stats').addEventListener('click', () => {
   state.predTotal = state.predCorrect = 0;
   updatePredStats(0, 0);
@@ -263,6 +315,7 @@ async function refreshModel() {
     m ? 'green' : '');
   updateTrainButtons();
   updatePredStatus();
+  updateTypeStatus();
 }
 
 // ─── Train (backend, polled for live progress) ───────────────────────────────
@@ -413,6 +466,7 @@ async function connectBackend() {
   }
   updateTrainButtons();
   updatePredStatus();
+  updateTypeStatus();
   checkLegacy();
 }
 

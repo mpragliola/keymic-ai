@@ -126,14 +126,7 @@ export class AudioCapture {
     const warm = ms(30);
     const region = highpass(this.readAbsolute(at + ms(r0) - warm, ms(r1 - r0) + warm),
                             this.sr, CFG.DETECT_HIGHPASS_HZ).subarray(warm);
-    const win = ms(5), hop = ms(1);
-    const cum = new Float64Array(region.length + 1);
-    for (let i = 0; i < region.length; i++) cum[i + 1] = cum[i] + region[i] * region[i];
-    const env = [];
-    for (let s0 = 0; s0 + win <= region.length; s0 += hop) env.push(cum[s0 + win] - cum[s0]);
-    const sorted = [...env].sort((x, y) => x - y);
-    const background = sorted[Math.floor(sorted.length * CFG.BACKGROUND_PERCENTILE / 100)] + 1e-12;
-    const envDb = Float32Array.from(env, e => 10 * Math.log10((e + 1e-12) / background));
+    const { envDb } = energyEnvelopeDb(region, ms(5), ms(1));
 
     // envDb[i] covers r0 + i ms … r0 + i + 5 ms relative to the event
     const findPeak = ([w0, w1]) => {
@@ -162,12 +155,100 @@ export class AudioCapture {
     return { audio: this.readAbsolute(at + ms(peak.ms) - pre, clip), ...diag, latencyMs: this.latencyMs };
   }
 
+  // Continuously scans the live stream for keystroke-like clicks with no
+  // keyboard event at all — the acoustic click is the only signal, for "type
+  // via microphone" when there may be no keyboard connected. Calls
+  // onClick({ audio, peakDb }) for each detected click, in stream order;
+  // audio always has a value (the threshold crossing already gates it).
+  // Runs until stopBlindScan() is called.
+  startBlindScan(onClick) {
+    this._blindStop = false;
+    this._blindDone = this._blindLoop(onClick).catch(() => {});   // mic can vanish mid-scan (tab closed, device unplugged)
+  }
+
+  async stopBlindScan() {
+    this._blindStop = true;
+    await this._blindDone;
+  }
+
+  async _blindLoop(onClick) {
+    const ms = t => Math.round(t * this.sr / 1000);
+    const hop = ms(CFG.BLIND_HOP_MS);
+    const bgWin = ms(CFG.BLIND_BACKGROUND_MS);
+    const refractory = ms(CFG.BLIND_REFRACTORY_MS);
+    const peakSearch = ms(CFG.BLIND_PEAK_SEARCH_MS);
+    const clip = ms(CFG.CAPTURE_MS), pre = ms(CFG.PRE_ONSET_MS);
+    const win = ms(5), envHop = ms(1), warm = ms(30);
+
+    let cooldownUntil = 0;       // absolute frame; no detection accepted before this
+    let scanned = this.written;  // absolute frame scanned up to so far
+
+    while (!this._blindStop) {
+      const target = scanned + hop;
+      await this.waitUntil(target);
+      if (this._blindStop) break;
+
+      // A trailing window ending at `target`: enough history for a stable background
+      // estimate, high-passed so fans/hum don't mask the click.
+      const region = highpass(this.readAbsolute(target - bgWin - warm, bgWin + warm),
+                              this.sr, CFG.DETECT_HIGHPASS_HZ).subarray(warm);
+      const { envDb, background } = energyEnvelopeDb(region, win, envHop);
+
+      // envDb[i] covers frame (target - bgWin + i*envHop); only the newest `hop`
+      // worth is unscanned since the previous iteration.
+      let peakI = -1, peakDb = -Infinity;
+      for (let i = Math.max(0, envDb.length - Math.ceil(hop / envHop)); i < envDb.length; i++) {
+        const frame = target - bgWin + i * envHop;
+        if (frame < cooldownUntil) continue;
+        if (envDb[i] > this.minPeakDb && envDb[i] > peakDb) { peakDb = envDb[i]; peakI = i; }
+      }
+
+      if (peakI >= 0) {
+        // The true peak can land a little after the first crossing (the click's rise
+        // time); refine over a short window ahead once that audio has arrived.
+        let bestFrame = target - bgWin + peakI * envHop, bestDb = peakDb;
+        await this.waitUntil(bestFrame + peakSearch);
+        if (this._blindStop) break;
+        const extra = highpass(this.readAbsolute(bestFrame - warm, peakSearch + warm),
+                               this.sr, CFG.DETECT_HIGHPASS_HZ).subarray(warm);
+        const { envDb: extraDb } = energyEnvelopeDb(extra, win, envHop, background);
+        for (let i = 0; i < extraDb.length; i++) {
+          if (extraDb[i] > bestDb) { bestDb = extraDb[i]; bestFrame = bestFrame + i * envHop; }
+        }
+
+        cooldownUntil = bestFrame + refractory;
+        await this.waitUntil(bestFrame + clip - pre);
+        if (this._blindStop) break;
+        onClick({ audio: this.readAbsolute(bestFrame - pre, clip), peakDb: bestDb, threshold: this.minPeakDb });
+      }
+
+      scanned = target;
+    }
+  }
+
   // Time-domain data for the waveform display canvas
   getWaveform() {
     const d = new Float32Array(this.analyser.frequencyBinCount);
     this.analyser.getFloatTimeDomainData(d);
     return d;
   }
+}
+
+// dB-above-background short-time energy envelope of already high-passed audio: a
+// `win`-ms window summed every `hop`-ms step. `background` can be supplied instead of
+// recomputed from `region` — useful for a short refinement region where a fresh
+// percentile estimate would be unreliable.
+function energyEnvelopeDb(region, win, hop, background) {
+  const cum = new Float64Array(region.length + 1);
+  for (let i = 0; i < region.length; i++) cum[i + 1] = cum[i] + region[i] * region[i];
+  const env = [];
+  for (let s0 = 0; s0 + win <= region.length; s0 += hop) env.push(cum[s0 + win] - cum[s0]);
+  if (background === undefined) {
+    const sorted = [...env].sort((x, y) => x - y);
+    background = sorted[Math.floor(sorted.length * CFG.BACKGROUND_PERCENTILE / 100)] + 1e-12;
+  }
+  const envDb = Float32Array.from(env, e => 10 * Math.log10((e + 1e-12) / background));
+  return { envDb, background };
 }
 
 // 4th-order Butterworth high-pass: two cascaded RBJ biquads (Q = 1/√2 each).

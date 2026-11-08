@@ -37,6 +37,7 @@
   <button class="tab-btn"        data-tab="samples">🔍 Samples</button>
   <button class="tab-btn"        data-tab="train">🧠 Train</button>
   <button class="tab-btn"        data-tab="predict">🎯 Predict</button>
+  <button class="tab-btn"        data-tab="type">⌨️ Type</button>
 </div>
 
 <!-- ══ Record panel ═══════════════════════════════════════════════════════════ -->
@@ -169,6 +170,44 @@
   <div class="card">
     <div class="card-title">Prediction history</div>
     <div id="pred-history"></div>
+  </div>
+
+</div>
+
+<!-- ══ Type panel ═════════════════════════════════════════════════════════════ -->
+<div id="tab-type" class="tab-panel">
+
+  <div class="card">
+    <div class="card-title">Type using only the microphone — no keyboard events, just the sound</div>
+    <div class="btn-row" style="margin-bottom:12px">
+      <button id="btn-mic-type" class="btn-primary">Enable mic</button>
+      <button id="btn-type-toggle" class="btn-primary" disabled>Start listening</button>
+      <span id="type-status" style="color:var(--warning);font-size:12px;align-self:center"></span>
+    </div>
+    <textarea id="type-output" rows="6" readonly
+      style="width:100%;font-family:var(--mono);font-size:16px;background:var(--bg);color:var(--text);
+             border:1px solid var(--border);border-radius:4px;padding:10px;resize:vertical"
+      placeholder="Detected keystrokes appear here as you type on the physical keyboard — microphone only, no keyboard input is read."></textarea>
+    <div class="btn-row" style="margin-top:12px">
+      <button id="btn-type-clear" class="btn-ghost">Clear</button>
+    </div>
+    <p style="margin-top:10px;color:var(--muted);font-size:12px">
+      Every click loud enough to cross the Record tab's threshold is classified and appended,
+      whether or not it was an actual tracked key — so background noise above the threshold
+      shows up too. Keys the model wasn't trained on can't be produced; unrecognized sounds are
+      still guessed as the closest trained key.
+    </p>
+  </div>
+
+  <div class="card">
+    <div class="card-title">Last detected click</div>
+    <div class="pred-main">
+      <div class="pred-big">
+        <span class="pred-label">Key</span>
+        <span id="type-last-key" class="pred-char">—</span>
+      </div>
+      <div id="type-conf-bars" class="conf-bars"></div>
+    </div>
   </div>
 
 </div>

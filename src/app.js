@@ -28,6 +28,7 @@ const state = {
   animFrame:   null,
   rejected:    0,        // presses ignored because no click was detected
   typing:      false,    // blind mic-only typing (Type tab) is active
+  collectingNoise: false,  // auto-capturing non-keystroke transients (Record tab) is active
 };
 
 const isActive = s => s === 'running' || s === 'stopping';
@@ -40,7 +41,7 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
     document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === target));
     document.querySelectorAll('.tab-panel').forEach(p => p.classList.toggle('active', p.id === `tab-${target}`));
     if (target === 'record') startWaveformLoop();
-    else stopWaveformLoop();
+    else { stopWaveformLoop(); if (state.collectingNoise) stopNoiseCapture(); }   // leaving the tab stops blind scanning
     if (target === 'samples') samplesTab.refresh();
     if (target === 'predict') {
       updatePredStatus();
@@ -81,7 +82,8 @@ function updateMicButtons() {
     b.disabled = state.micActive;
     b.textContent = state.micActive ? 'Mic on' : 'Enable mic';
   }
-  document.getElementById('btn-type-toggle').disabled = !state.micActive || !state.model;
+  document.getElementById('btn-type-toggle').disabled = !state.micActive || !state.model || state.collectingNoise;
+  updateNoiseButton();
 }
 
 document.getElementById('btn-mic').addEventListener('click', startMic);
@@ -218,27 +220,43 @@ async function recordKey(k, eventTime) {
   }
 }
 
-// Captures whatever sound just happened (a mouse click, a cough, a desk tap — anything
-// that isn't a keystroke) and stores it under the NOISE_KEY sentinel. Unlike recordKey,
-// this is anchored to the button click itself rather than a keydown event, since there's
-// no keyboard event to anchor to.
-async function recordNoise() {
-  const cut = await state.audio.captureKeystroke();
-  updateCaptureStats(cut);
-  if (!cut.audio) { showRecordError('Not saved: no transient detected.'); return; }
-  try {
-    const r = await api.addSamples(NOISE_KEY, state.audio.sr, cut.audio);
+// Captures non-keystroke transients (mouse clicks, coughs, desk taps — anything that
+// isn't a keystroke) and stores each one under the NOISE_KEY sentinel, so the model has
+// somewhere to put a sound that isn't one of the trained keys. Reuses the same continuous
+// onset scanner as the Type tab's blind typing (§1.1.3), just pointed at storage instead
+// of prediction — no per-sound button press, just a start/stop window.
+function onNoiseTransient(cut) {
+  api.addSamples(NOISE_KEY, state.audio.sr, cut.audio).then(r => {
     state.counts[NOISE_KEY] = r.count;
     state.sr = state.audio.sr;
     renderCounts();
-    showRecordError('');
-  } catch (e) {
-    showRecordError('Not saved: ' + e.message);
-  }
+  }).catch(e => showRecordError('Not saved: ' + e.message));
 }
 
-const btnNoise = document.getElementById('btn-record-noise');
-if (btnNoise) btnNoise.addEventListener('click', recordNoise);
+const btnNoiseToggle = document.getElementById('btn-noise-collect-toggle');
+
+function updateNoiseButton() {
+  if (!btnNoiseToggle) return;
+  btnNoiseToggle.disabled = !state.micActive || state.typing;   // one blind scan at a time
+  btnNoiseToggle.textContent = state.collectingNoise ? 'Stop capturing' : 'Start capturing';
+}
+
+function startNoiseCapture() {
+  if (!state.micActive || state.typing) return;
+  state.collectingNoise = true;
+  state.audio.startBlindScan(onNoiseTransient);
+  updateNoiseButton();
+  showRecordError('');
+}
+
+async function stopNoiseCapture() {
+  if (!state.collectingNoise) return;
+  state.collectingNoise = false;
+  await state.audio.stopBlindScan();
+  updateNoiseButton();
+}
+
+if (btnNoiseToggle) btnNoiseToggle.addEventListener('click', () => (state.collectingNoise ? stopNoiseCapture() : startNoiseCapture()));
 
 // ─── Predict ─────────────────────────────────────────────────────────────────
 function updatePredStatus() {
@@ -306,6 +324,7 @@ function onBlindClick(cut) {
 const btnTypeToggle = document.getElementById('btn-type-toggle');
 
 function startTyping() {
+  if (state.collectingNoise) return;   // one blind scan at a time
   state.typing = true;
   btnTypeToggle.textContent = 'Stop listening';
   state.audio.startBlindScan(onBlindClick);

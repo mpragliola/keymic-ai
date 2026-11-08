@@ -106,11 +106,15 @@ same way as the Predict tab.
 
 Because every loud sound in range gets classified as *something* — the
 model is a closed-set softmax over trained keys — a reserved sentinel class,
-`NOISE_KEY = '~'` (`src/config.js`), is recorded from the Record tab's
-"I just made a non-keystroke sound" button (anchored to the button click,
-not a keydown) for mouse clicks, coughs, and other non-keystroke transients.
-It's stored and trained like any other key (a single character, so it needs
-no special-casing in `backend/keymic/store.py`'s hex-encoded filenames); the
+`NOISE_KEY = '~'` (`src/config.js`), covers mouse clicks, coughs, and other
+non-keystroke transients. The Record tab's "Start capturing" button reuses
+this same blind scanner (pointed at storage instead of `/predict`): once
+started, every transient it detects above the threshold is stored under
+`NOISE_KEY` automatically until "Stop capturing" is pressed — no per-sound
+button press. Only one blind scan runs at a time, so starting this disables
+the Type tab's listening toggle and vice versa. `NOISE_KEY` is stored and
+trained like any other key (a single character, so it needs no
+special-casing in `backend/keymic/store.py`'s hex-encoded filenames); the
 Type tab just drops a prediction instead of appending it when the predicted
 key is `NOISE_KEY`.
 

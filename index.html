@@ -57,12 +57,14 @@
   <div class="card">
     <div class="card-title">Non-keystroke sounds</div>
     <p style="font-size:12px;color:var(--muted);margin-bottom:10px">
-      The Type tab has to classify every loud sound it hears as something. Recording a few
-      mouse clicks, coughs, or desk taps here gives it a "none of these" option, so it
-      doesn't force an unrelated sound into one of the trained keys.
+      The Type tab has to classify every loud sound it hears as something. Start capturing,
+      then go make a few mouse clicks, coughs, or desk taps — each transient above the
+      threshold is detected and stored automatically (same detector as the Type tab's
+      blind scan), and this gives it a "none of these" option instead of forcing those
+      sounds into one of the trained keys.
     </p>
     <div class="btn-row">
-      <button id="btn-record-noise" class="btn-primary">I just made a non-keystroke sound</button>
+      <button id="btn-noise-collect-toggle" class="btn-primary">Start capturing</button>
     </div>
     <p id="noise-count" style="font-size:12px;color:var(--muted);margin-top:6px">0 recorded</p>
   </div>

@@ -1,4 +1,4 @@
-"""Constants shared with the browser frontend (src/config.js) — keep both in sync."""
+"""Constants shared with the browser frontend (src/config.js) — keep the capture settings in sync."""
 from dataclasses import dataclass
 
 CAPTURE_MS  = 200   # audio window stored per keystroke (ms)
@@ -10,16 +10,15 @@ ONSET_SEARCH_MS = 100   # onset re-detection (onset.py) looks for the click with
                         # much of the stored clip, biased toward the earliest crossing so a
                         # later, louder release doesn't get mistaken for the press
 ONSET_THRESHOLD_DB = 6  # click = first point this many dB above the clip's own background
-N_MELS      = 40    # mel filterbank bands
-FMIN_HZ     = 300   # mel filterbank range (Hz): below = rumble/hum, above = mostly mic hiss
+# Model features (backend only — src/config.js has separate settings for the Samples
+# tab's preview images). Chosen on the recorded data: a 2048-sample FFT (~23 Hz bins at
+# 48 kHz) resolves the fine resonance differences between keys that a 512-sample FFT
+# with 40 bands blurred together; 128 bands from 50 Hz keep the low-end body resonance.
+N_MELS      = 128   # mel filterbank bands
+FMIN_HZ     = 50    # mel filterbank range (Hz)
 FMAX_HZ     = 16000
-FRAME_LEN   = 512   # STFT frame size (samples)
-HOP_LEN     = 128   # STFT hop size (samples)
-# Fixed time-axis length fed to the CNN. A FEATURE_MS=100 clip yields ~31-34 real STFT
-# frames (depending on sr: 44.1 vs 48 kHz) — N_FRAMES=64 (sized for the old 200ms window)
-# would zero-pad roughly half the input. 32 keeps padding to a frame or two either way,
-# and divides evenly by the three 2x poolings in model.py.
-N_FRAMES    = 32
+FRAME_LEN   = 2048  # STFT frame size (samples)
+HOP_LEN     = 256   # STFT hop size (samples) — 10–11 frames per FEATURE_MS clip
 MAX_SAMPLES = 1000  # per key; oldest samples are dropped beyond this (~38 MB per key at 48 kHz)
 MIN_SAMPLES = 8     # a key needs this many samples to be included in training
 MIN_KEYS    = 2     # training needs at least this many eligible keys

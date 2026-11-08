@@ -2,13 +2,13 @@
 
 ## Overview
 
-KeyMic trains a Convolutional Neural Network (CNN) to classify keyboard keys
+KeyMic trains a small neural network to classify keyboard keys
 from their acoustic fingerprint. Two local processes, nothing leaves the machine:
 
 | Part | Does |
 |------|------|
 | Browser (`index.html`, `src/`) | microphone capture, cutting each keystroke clip at its click (§1.1), sample browser, training progress UI, prediction UI |
-| Backend (`backend/`, PyTorch) | sample storage, spectrograms (§1.2–1.6), CNN training on the GPU (§2), prediction |
+| Backend (`backend/`, PyTorch) | sample storage, spectrograms (§1.2–1.6), training on the GPU (§2), prediction |
 
 ```
 keydown ─► browser: cut 200 ms clip at the click ─► POST /samples/{key}   (record)
@@ -17,14 +17,13 @@ Train tab ─► POST /train ─► poll GET /train/status every 400 ms (log lin
 ```
 
 The browser still computes spectrograms with TensorFlow.js, only to draw the
-previews in the Samples tab; the JS and Python versions produce the same
-features (identical filterbank, same normalisation).
+previews in the Samples tab, with its own display-oriented settings (§1.6).
 
 ---
 
 ## 1  Feature pipeline: keystroke clip → log-mel spectrogram
 
-Raw audio → 2-D image that the CNN can learn from.
+Raw audio → log-mel spectrogram → per-band statistics the classifier learns from.
 
 ### 1.1  Signal capture
 
@@ -120,30 +119,39 @@ key is `NOISE_KEY`.
 
 ### 1.2  STFT
 
-Each 200 ms window is framed with:
+The 100 ms feature window (§1.1.2) is framed with:
 
 | Parameter | Value | Rationale |
 |-----------|-------|-----------|
-| Frame length | 512 samples | ≈ 11 ms at 44 100 Hz — shorter than a keystroke |
-| Hop length | 128 samples | 75 % overlap for temporal smoothness |
+| Frame length | 2048 samples | ≈ 43 ms at 48 kHz; frequency bins ≈ 23 Hz apart — fine enough to resolve the small resonance differences between keys |
+| Hop length | 256 samples | 10–11 frames per 100 ms window |
 | Window function | Hann | Reduces spectral leakage at frame boundaries |
-| Transform | Real FFT (`torch.fft.rfft`; `tf.spectral.rfft` for browser previews) | Complex spectrum; power = `re² + im²` |
+| Transform | Real FFT (`torch.fft.rfft`) | Complex spectrum; power = `re² + im²` |
 
 ### 1.3  Mel filterbank
 
-The power spectrum (257 bins) is projected onto **40 triangular mel-scale
-filters spanning 300 Hz – 16 kHz** (`buildFilterbank`) represented as a
-`[257 × 40]` matrix. Below 300 Hz is rumble and mains hum; above 16 kHz is
-mostly microphone hiss. Restricting the range keeps that noise out of the
-features and out of the per-spectrogram normalisation. Stored clips are
-unfiltered, so the range can change without re-recording (but requires
-retraining).
-Matrix-multiplication (`tf.matMul`) produces one mel-energy vector per frame.
+The power spectrum (1025 bins) is projected onto **128 triangular mel-scale
+filters spanning 50 Hz – 16 kHz** (`mel_filterbank`), giving one 128-band
+mel-energy vector per frame. Stored clips are unfiltered, so the range can change
+without re-recording (but requires retraining).
 
 Mel scale formula:
 ```
 mel(f) = 2595 · log₁₀(1 + f / 700)
 ```
+
+**Why these settings.** They were chosen by measuring on real recordings (37 keys,
+~100 presses each), training a plain linear classifier on each key's earlier presses
+and testing on its later ones:
+
+| Features | Held-out accuracy |
+|---|---|
+| Previous: 512-sample FFT, 40 mels 300 Hz–16 kHz, full time layout | 53 % |
+| 2048-sample FFT, 128 mels from 50 Hz, mean + std over time | 80 % |
+| …plus per-spectrogram z-score (§1.5) | 83 % |
+
+The 512-sample FFT's ~94 Hz bins, squeezed into 40 bands, blurred together exactly
+the fine spectral differences that distinguish keys.
 
 ### 1.4  Log compression
 
@@ -161,79 +169,42 @@ z = (logMel − mean) / (std + ε)
 ```
 
 Z-score computed per spectrogram (not across the dataset) so that absolute
-loudness level and room noise floor are factored out.  This is essential for
-generalising across recording sessions.
+loudness — how hard the key was hit, how far the mic is — is factored out.
 
-### 1.6  Temporal alignment
+### 1.6  No fixed time length
 
-After normalisation, the time axis is padded with zeros or cropped to exactly
-**32 frames**, fixing the CNN input shape. A `FEATURE_MS = 100` clip (§1.1.2) yields
-~31 real STFT frames at 44.1 kHz or ~34 at 48 kHz — `N_FRAMES` is set to 32 so padding
-never amounts to more than a frame or two either way. (It was 64 before `FEATURE_MS`
-existed, sized for the then-200ms window's ~72 frames; left at 64 after the crop to
-100ms, it would have padded roughly *half* the input with zeros.)
+The time axis is left at its natural length (10–11 frames). The model summarizes
+each band over time itself (§2.1), so there is no padding to dilute those
+statistics. **Model input: `[T, 128]`** (frames × mel bands).
 
-**Final input tensor shape: `[32, 40, 1]`** (frames × mel-bands × channel).
+The browser's TensorFlow.js spectrogram (`src/features.js`) keeps its own, finer-in-time
+settings — it only draws the Samples tab previews and is not the model's input.
 
 ---
 
-## 2  Convolutional Neural Network (backend, PyTorch)
+## 2  Classifier (backend, PyTorch)
 
 ### 2.1  Architecture
 
 ```
-Input          [32 × 40 × 1]
-
-Conv Block 1
-  Conv2D        16 filters, 3×3, same padding
-  BatchNorm · ReLU
-  Conv2D        16 filters, 3×3, same padding   (depth, not a second pooling stage)
-  BatchNorm · ReLU
-  MaxPool2D     2×2 → [16 × 20 × 16]
-  Dropout2D     0.1
-
-Conv Block 2
-  Conv2D        32 filters, 3×3, same padding
-  BatchNorm · ReLU
-  Conv2D        32 filters, 3×3, same padding
-  BatchNorm · ReLU
-  MaxPool2D     2×2 → [8 × 10 × 32]
-  Dropout2D     0.15
-
-Conv Block 3
-  Conv2D        64 filters, 3×3, same padding
-  BatchNorm · ReLU
-  Conv2D        64 filters, 3×3, same padding
-  BatchNorm · ReLU
-  MaxPool2D     2×2 → [4 × 5 × 64]
-  Dropout2D     0.2
-
-GlobalAveragePooling2D  → [64]
-
-Dense           32 units, ReLU
-Dropout         0.4
-
-Dense           N classes, Softmax
+Input                [T × 128]  z-scored log-mel
+Per band over time:  mean, std  → [256]
+BatchNorm1d          (learned per-feature standardization)
+Dropout              0.2
+Dense                128 units, ReLU
+Dropout              0.5
+Dense                N classes   (softmax at prediction time)
 ```
-
-A fourth pooling stage was deliberately not added — at a 32-frame input, three 2× poolings
-already leave only 4 frames; a fourth would leave 2, too little spatial extent for a 3×3
-kernel to mean much. The extra depth instead comes from a second 3×3 conv *within* each
-block (c_out → c_out, no further downsampling) — roughly 3x the conv parameters of the
-single-conv version this replaced, still small in absolute terms.
 
 ### 2.2  Design choices
 
 | Choice | Reason |
 |--------|--------|
-| Three conv blocks, 16→32→64 filters, two convs each | Deliberately small — a per-user dataset is tens of clips per key, not thousands; a wider net (the original 32→64→128, one conv each) memorizes the training set instead of generalizing. If a larger dataset (more keys, the noise class, more samples per key) starts showing §2.3's overfitting signature again, drop back to one conv per block before adding dropout or data |
-| Batch normalisation | Stabilises training and allows higher learning rates |
-| Dropout2D after every conv block | Drops whole feature maps during training, not individual pixels — regularises the conv stack itself, not just the dense head |
-| GlobalAveragePooling instead of Flatten | Reduces parameter count; more robust to slight temporal misalignment |
-| Dropout 0.4 in the head | Additional regulariser on the final dense layer |
-| Softmax output | Multi-class probability vector; argmax gives the predicted key (applied at prediction time; training uses logits with `CrossEntropyLoss`) |
-| BatchNorm momentum 0.1 (PyTorch default) | Running statistics used at inference converge within the few hundred steps a small dataset gives |
-| Training-time augmentation + weight decay + early stopping | See §2.3 — the main defense against overfitting given how little data there is per key |
+| Mean + std over time instead of a CNN over the spectrogram | Measured on real recordings: what distinguishes keys is their frequency fingerprint, not the exact time course of the click inside the window. Keeping the time layout mostly added sensitivity to onset jitter — pooling it away was worth ~25 points (§1.3's table). The spectrogram CNNs used before never reached usable live accuracy on these recordings |
+| One small hidden layer | A hidden layer adds little over a linear classifier on this data (~81 % vs ~80–83 %), so the net is kept small; dropout and weight decay do the work against small per-key sample counts |
+| BatchNorm1d on the input | A linear layer on unstandardized log-mel statistics trains poorly; BatchNorm's running statistics are saved with the weights, so the same standardization applies at prediction time |
+| Softmax output | Multi-class probability vector; argmax gives the predicted key (training uses logits with `CrossEntropyLoss`) |
+| Training-time augmentation + weight decay + early stopping | See §2.3 |
 
 ### 2.3  Training
 
@@ -245,11 +216,21 @@ single-conv version this replaced, still small in absolute terms.
 | Metric | Accuracy |
 | Epochs | 60 (adjustable in the Train tab) |
 | Batch size | 32 |
-| Validation split | 20 % per key (stratified) |
+| Validation split | each key's most recent 20 % of presses |
 | Weight decay | 1e-4 (Adam L2 penalty) |
 
 Minimum to start: **8 samples per key**, **2 distinct keys**.
 Maximum stored per key: 1000 (oldest dropped on overflow).
+
+**Validation = most recent presses, not a random sample.** Keys are recorded in runs of
+consecutive presses, so mic position, background noise and typing force drift *within*
+each key's samples — on real recordings, a classifier could guess the key 3.5× above
+chance from the background noise alone, with no keystroke in it. A random split lets
+validation share that drift with training: on the same data and model, a random split
+reported 89 % where testing on later presses gave 83 %. Validating on each key's latest
+presses keeps `val_acc` closer to what live typing will see, and makes early stopping pick
+the epoch that generalizes across that drift. The split is deterministic (it depends only
+on recording order), so a resumed run validates on the same clips as the run before.
 
 **Training-time augmentation.** Each batch's raw clips are perturbed fresh before the
 spectrogram is computed — a different random perturbation every epoch:
@@ -261,31 +242,26 @@ spectrogram is computed — a different random perturbation every epoch:
 | Time shift | ± 6 ms, zero-padded |
 
 The validation set is never augmented, so `val_acc` reflects the model's accuracy on
-clean, unperturbed audio. Without this, a small per-key sample count and subtle
-inter-key acoustic differences let the network memorise incidental details of one
-recording session (exact noise floor, exact timing) instead of the keystroke's actual
-acoustic signature — it looks fine on a validation split of that same session and then
-performs at chance on new keystrokes.
+clean, unperturbed audio.
+
+**Early stopping.** The checkpoint with the lowest validation loss is saved, not the last
+epoch's.
 
 A true-key × predicted-key confusion matrix over the final validation set is logged at
 the end of training (and returned from `/model` as `info.confusion`), since the
 aggregate `val_acc` number can't distinguish "genuinely random across all keys" from
 "biased toward one key" or "two specific keys keep getting swapped."
 
-**Resuming.** By default every run starts from a freshly-initialized network — raising
-the epoch count and training again restarts from scratch, it doesn't continue where the
-last run left off. Checking "Resume from current model" (Train tab) warm-starts the new
-network from the currently saved model's weights instead (`Trainer.start` clones its
-`state_dict` before the training thread starts, `_train` loads it in place of the random
-init). This only works if the key set is unchanged since that model was saved — rejected
-with a 400 otherwise, since the output layer's size depends on the number of keys. The
-optimizer's own state (Adam's momentum) isn't carried over, and each run draws a fresh
-random train/validation split, so early stopping's `best_val_loss` always starts over at
-epoch 1 of the new run rather than continuing a curve from the old one. The key-set check
-only catches a changed *key set* — a model saved under a since-edited `KeystrokeCNN`
-(different layer sizes, same keys) fails `load_state_dict` with a shape mismatch instead;
-`_train` catches that `RuntimeError` and falls back to a fresh network with a logged
-explanation rather than crashing the run.
+**Resuming.** By default every run starts from a freshly-initialized network. Checking
+"Resume from current model" (Train tab) warm-starts the new network from the currently
+saved model's weights instead (`Trainer.start` clones its `state_dict` before the
+training thread starts, `_train` loads it in place of the random init). This only works
+if the key set is unchanged since that model was saved — rejected with a 400 otherwise,
+since the output layer's size depends on the number of keys. Adam's own state isn't
+carried over, and early stopping's `best_val_loss` starts over with the new run. A model
+saved under a since-changed architecture (same keys, different layers — e.g. a
+`KeystrokeCNN` checkpoint from before §2.2's switch) fails `load_state_dict`; `_train`
+catches that and falls back to a fresh network with a logged explanation.
 
 ### 2.4  Persistence (backend)
 
@@ -295,8 +271,7 @@ explanation rather than crashing the run.
 | Sample rate | `backend/data/meta.json` |
 | Trained model | `backend/data/model.pt` — weights, key list, sample rate, metrics |
 
-Training runs in a background thread on the GPU (spectrograms of the whole
-dataset in one batched pass). The API exposes start / stop / status / delete;
+Training runs in a background thread on the GPU. The API exposes start / stop / status / delete;
 a stopped run saves nothing. Endpoints and setup: `backend/README.md`.
 
 Samples recorded in the browser before the backend existed (IndexedDB) are

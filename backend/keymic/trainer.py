@@ -17,10 +17,10 @@ import torch.nn as nn
 from . import config as C
 from . import onset
 from .features import MelSpectrogram
-from .model import KeystrokeCNN
+from .model import KeystrokeNet
 from .store import SampleStore, SampleRateMismatch, StoreError
 
-CHECKPOINT_FORMAT = 1
+CHECKPOINT_FORMAT = 2   # 2: KeystrokeNet (pooled-stats MLP); 1 was the spectrogram CNN
 
 
 def _augment(clips: torch.Tensor, shift_max: int) -> torch.Tensor:
@@ -56,7 +56,7 @@ class NoModel(LookupError):
 
 @dataclass
 class LoadedModel:
-    net: KeystrokeCNN
+    net: KeystrokeNet
     keys: list[str]
     sr: int
     mel: MelSpectrogram
@@ -199,7 +199,7 @@ class Trainer:
         self._log(f"Device: {name} · training on keys: {', '.join(repr(k) for k in keys)}")
         if resume_state is not None:
             self._log(f"Resuming from the current model for {p.epochs} more epoch(s) "
-                      f"(fresh random train/validation split, so early stopping starts over)")
+                      f"(early stopping starts over from this run)")
 
         clips, labels = [], []
         for ci, k in enumerate(keys):
@@ -234,19 +234,22 @@ class Trainer:
         audio = torch.from_numpy(recentered).to(dev)   # [N, feat_len + 2*margin], click-aligned
         self._log(f"Onset re-detection done in {time.perf_counter() - t_onset:.1f}s")
 
-        # Stratified split: VAL_SPLIT of every key goes to validation, so each
-        # key appears in both sets.
-        rng = np.random.default_rng()
+        # Per-key split by recording order: each key's most recent VAL_SPLIT of presses is
+        # validation. Keys are recorded in runs of consecutive presses, so mic position,
+        # background noise and typing force drift *within* a key's samples; a random split
+        # lets validation share that drift with training and overstates live accuracy
+        # (measured ~6 points on real recordings). Store order is oldest → newest.
+        # Deterministic, so a resumed run validates on the same clips as the one before.
         train_idx, val_idx = [], []
         for ci in range(len(keys)):
             idx = np.flatnonzero(labels_np == ci)
-            rng.shuffle(idx)
             n_val = max(1, round(len(idx) * p.val_split))
-            val_idx += idx[:n_val].tolist()
-            train_idx += idx[n_val:].tolist()
+            val_idx += idx[-n_val:].tolist()
+            train_idx += idx[:-n_val].tolist()
         train_idx = torch.tensor(train_idx, device=dev)
         val_idx = torch.tensor(val_idx, device=dev)
-        self._log(f"Total {len(labels)} samples ({len(train_idx)} train / {len(val_idx)} validation)")
+        self._log(f"Total {len(labels)} samples ({len(train_idx)} train / {len(val_idx)} validation "
+                  f"— each key's most recent {p.val_split:.0%})")
 
         # The centered feat_len window, dropping the ± margin kept only for augmentation.
         # Validation is never augmented, so val_acc tracks real generalization.
@@ -254,13 +257,13 @@ class Trainer:
                            for i in range(0, len(val_idx), 512)])
         y_val = y[val_idx]
 
-        net = KeystrokeCNN(len(keys)).to(dev)
+        net = KeystrokeNet(len(keys)).to(dev)
         if resume_state is not None:
             try:
                 net.load_state_dict(resume_state)   # warm start; optimizer state is not carried over
             except RuntimeError as e:
                 # The saved model was trained under a since-changed architecture (e.g. a
-                # KeystrokeCNN edit) — same key set, incompatible shapes. Fall back to a
+                # KeystrokeNet edit) — same key set, incompatible shapes. Fall back to a
                 # fresh net rather than crashing the run.
                 self._log(f"Could not resume ({e}) — the saved model's architecture doesn't "
                           f"match the current one. Starting from a fresh network instead.")
@@ -278,6 +281,8 @@ class Trainer:
                 if self._stop.is_set():
                     break
                 idx = perm[b:b + p.batch_size]
+                if len(idx) < 2:
+                    continue   # BatchNorm can't compute batch statistics from a single clip
                 # Shift within the ± margin of real audio kept around the feat_len window,
                 # then take the centered crop — same convention as x_val, just perturbed.
                 batch_x = mel(_augment(audio[idx], margin)[:, margin:margin + feat_len])
@@ -372,7 +377,7 @@ class Trainer:
             self._log(k.rjust(9) + "".join(str(int(cm[i, j])).rjust(width + 1) for j in range(n)))
         return {"keys": keys, "matrix": cm.tolist()}
 
-    def _save(self, net: KeystrokeCNN, keys: list[str], sr: int, info: dict) -> None:
+    def _save(self, net: KeystrokeNet, keys: list[str], sr: int, info: dict) -> None:
         ckpt = {"format": CHECKPOINT_FORMAT, "state_dict": net.state_dict(), "keys": keys, "sr": sr, "info": info}
         tmp = self.model_path.with_suffix(".tmp")
         torch.save(ckpt, tmp)
@@ -384,12 +389,12 @@ class Trainer:
         try:
             # weights_only: the checkpoint holds only tensors and plain types, so no pickle code runs
             ckpt = torch.load(self.model_path, map_location=self.device, weights_only=True)
-            net = KeystrokeCNN(len(ckpt["keys"])).to(self.device)
+            net = KeystrokeNet(len(ckpt["keys"])).to(self.device)
             net.load_state_dict(ckpt["state_dict"])
             net.eval()
             return LoadedModel(net, ckpt["keys"], ckpt["sr"], MelSpectrogram(ckpt["sr"], self.device), ckpt["info"])
         except Exception as e:
-            # A checkpoint saved by an older KeystrokeCNN (different layer sizes) raises a
+            # A checkpoint saved by an older KeystrokeNet (different layer sizes) raises a
             # RuntimeError here. Failing to start the whole server over one stale file would be
             # far worse than starting with no model — move it aside (never delete silently) and
             # let the client discover there's no model the normal way, through GET /model.

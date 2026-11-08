@@ -1,6 +1,6 @@
 # KeyMic backend
 
-Python server that stores keystroke recordings, trains the keystroke CNN on
+Python server that stores keystroke recordings, trains the keystroke classifier on
 your NVIDIA GPU (PyTorch + CUDA), and serves predictions (see `../ARCHITECTURE.md`).
 
 The browser frontend (repo root) uses this API for everything except audio capture.
@@ -80,7 +80,7 @@ backend/
 └── keymic/
     ├── config.py        constants shared with src/config.js
     ├── features.py      log-mel spectrogram on the GPU (mirrors src/features.js)
-    ├── model.py         KeystrokeCNN (mirrors src/model.js)
+    ├── model.py         KeystrokeNet (pooled log-mel statistics → small MLP)
     ├── store.py         samples on disk: data/samples/key_<hex>.npy + meta.json
     ├── trainer.py       background training thread, stop, checkpointing, inference
     └── api.py           FastAPI routes

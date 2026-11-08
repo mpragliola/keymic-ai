@@ -25,13 +25,13 @@ export const CFG = {
   BLIND_REFRACTORY_MS: 150, // minimum spacing between two accepted clicks
   BLIND_PEAK_SEARCH_MS: 30, // once a threshold crossing fires, look this far ahead for the true peak
 
-  // Feature extraction
+  // Samples-tab spectrogram previews only — the model's features are set in backend/keymic/config.py
   N_MELS:       40,   // mel filterbank bands
   FMIN_HZ:     300,   // mel filterbank range: below = rumble/hum, above = mostly mic hiss
   FMAX_HZ:   16000,
   FRAME_LEN:   512,   // STFT frame size (samples)
   HOP_LEN:     128,   // STFT hop size (samples)
-  N_FRAMES:     64,   // fixed time-axis length fed to the CNN
+  N_FRAMES:     64,   // time-axis length of the preview image
 
   // Training (backend enforces these; kept here for UI hints)
   MAX_SAMPLES:  1000,

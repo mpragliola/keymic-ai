@@ -1,12 +1,15 @@
 """Log-mel spectrogram front-end, computed on the GPU in batches.
 
-Mirrors computeMelSpec in src/features.js step by step, so spectrograms match
-between browser and backend: frame → Hann window → rFFT → power → mel
-filterbank → log → per-spectrogram z-score → pad/crop to N_FRAMES.
+frame → Hann window → rFFT → power → mel filterbank → log → per-spectrogram z-score.
+The time axis is left at whatever length the clip produces (10–11 frames for a
+FEATURE_MS=100 clip): the model summarizes each mel band over time itself, so there's
+no fixed-length padding to dilute those statistics.
+
+The browser's computeMelSpec (src/features.js) uses its own, finer-in-time settings for
+the Samples tab's preview images; it is not the model's input.
 """
 import numpy as np
 import torch
-import torch.nn.functional as F
 
 from . import config as C
 
@@ -34,12 +37,11 @@ def mel_filterbank(n_mels: int, fft_len: int, sr: int,
 
 
 class MelSpectrogram:
-    """Turns a batch of raw clips [B, L] into CNN input [B, 1, N_FRAMES, N_MELS]."""
+    """Turns a batch of raw clips [B, L] into model input [B, T, N_MELS]."""
 
     def __init__(self, sr: int, device: torch.device):
         self.sr = sr
         self.fb = torch.from_numpy(mel_filterbank(C.N_MELS, C.FRAME_LEN, sr)).to(device)
-        # Periodic Hann, which is what tf.signal.hannWindow produces for even lengths
         self.window = torch.hann_window(C.FRAME_LEN, periodic=True, device=device)
 
     @torch.no_grad()
@@ -49,11 +51,8 @@ class MelSpectrogram:
         power = spec.real.square() + spec.imag.square()
         log_mel = torch.log(power @ self.fb + 1e-6)                 # [B, T, N_MELS]
 
-        # z-score over each whole spectrogram (population variance, like tf.moments)
+        # z-score over each whole spectrogram (population variance): removes overall
+        # loudness, which varies with how hard a key was hit and with mic distance
         mean = log_mel.mean(dim=(1, 2), keepdim=True)
         std = log_mel.var(dim=(1, 2), unbiased=False, keepdim=True).sqrt()
-        x = (log_mel - mean) / (std + 1e-8)
-
-        t = x.shape[1]
-        x = x[:, :C.N_FRAMES] if t >= C.N_FRAMES else F.pad(x, (0, 0, 0, C.N_FRAMES - t))
-        return x.unsqueeze(1)                                       # [B, 1, N_FRAMES, N_MELS]
+        return (log_mel - mean) / (std + 1e-8)

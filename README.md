@@ -1,14 +1,14 @@
 # KeyMic
 
 Learns to recognise which keyboard key was pressed from its sound alone. You
-record labelled keystrokes through the microphone, train a CNN on their log-mel
+record labelled keystrokes through the microphone, train a classifier on their log-mel
 spectrograms, then type and compare the model's guess against the real key.
 
 - **Frontend** (repo root): plain HTML + ES modules. Records keystrokes from the
   microphone, cuts each clip at the detected click, and shows samples, training
   progress and predictions.
 - **Backend** (`backend/`): Python + PyTorch server. Stores the samples, trains
-  the CNN on the GPU and runs predictions.
+  the classifier on the GPU and runs predictions.
 
 ## Run
 

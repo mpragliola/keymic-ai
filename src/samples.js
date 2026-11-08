@@ -3,7 +3,7 @@ import { displayKey } from './config.js?v=15';
 const PAGE_SIZE = 12;
 
 // Samples tab: browse one key's recorded clips page by page (newest first),
-// each with waveform, log-mel spectrogram (the CNN's input), playback and delete.
+// each with waveform, log-mel spectrogram preview, playback and delete.
 //
 // deps: { getCounts() → {key: n}, getSamples(key) → Promise<Float32Array[]>,
 //         deleteSample(key, index) → Promise, getSr() → Promise<number|null>,

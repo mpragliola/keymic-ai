@@ -95,10 +95,18 @@ class Trainer:
             if self.state in ("running", "stopping"):
                 raise TrainingBusy("a training run is already active")
             keys = self._eligible_keys()   # raises StoreError if there's not enough data
+            resume_state = None
+            if params.resume:
+                if self.model is None:
+                    raise StoreError("no trained model to resume from")
+                if self.model.keys != keys:
+                    raise StoreError("the trained key set has changed since the current model "
+                                      "(samples added/removed for a key) — train fresh instead")
+                resume_state = {k: v.detach().clone() for k, v in self.model.net.state_dict().items()}
             self._reset_run_state("running")
             self.keys, self.epochs = keys, params.epochs
             self._stop.clear()
-            self._thread = threading.Thread(target=self._run, args=(params, keys), daemon=True)
+            self._thread = threading.Thread(target=self._run, args=(params, keys, resume_state), daemon=True)
             self._thread.start()
         return self.status()
 
@@ -174,9 +182,9 @@ class Trainer:
         with self._lock:
             self.logs.append(msg)
 
-    def _run(self, p: C.TrainParams, keys: list[str]) -> None:
+    def _run(self, p: C.TrainParams, keys: list[str], resume_state: dict | None) -> None:
         try:
-            self._train(p, keys)
+            self._train(p, keys, resume_state)
         except Exception as e:  # surfaced to the client through status()
             with self._lock:
                 self.state = "error"
@@ -184,11 +192,14 @@ class Trainer:
                 self.logs.append(f"Error: {self.error}")
                 self.logs.append(traceback.format_exc().strip().splitlines()[-1])
 
-    def _train(self, p: C.TrainParams, keys: list[str]) -> None:
+    def _train(self, p: C.TrainParams, keys: list[str], resume_state: dict | None = None) -> None:
         dev = self.device
         sr = self.store.sr
         name = torch.cuda.get_device_name(dev) if dev.type == "cuda" else "CPU"
         self._log(f"Device: {name} · training on keys: {', '.join(repr(k) for k in keys)}")
+        if resume_state is not None:
+            self._log(f"Resuming from the current model for {p.epochs} more epoch(s) "
+                      f"(fresh random train/validation split, so early stopping starts over)")
 
         clips, labels = [], []
         for ci, k in enumerate(keys):
@@ -232,6 +243,8 @@ class Trainer:
         y_val = y[val_idx]
 
         net = KeystrokeCNN(len(keys)).to(dev)
+        if resume_state is not None:
+            net.load_state_dict(resume_state)   # warm start; optimizer state is not carried over
         opt = torch.optim.Adam(net.parameters(), lr=p.lr, weight_decay=C.WEIGHT_DECAY)
         loss_fn = nn.CrossEntropyLoss()
         t0 = time.perf_counter()

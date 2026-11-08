@@ -260,6 +260,17 @@ the end of training (and returned from `/model` as `info.confusion`), since the
 aggregate `val_acc` number can't distinguish "genuinely random across all keys" from
 "biased toward one key" or "two specific keys keep getting swapped."
 
+**Resuming.** By default every run starts from a freshly-initialized network — raising
+the epoch count and training again restarts from scratch, it doesn't continue where the
+last run left off. Checking "Resume from current model" (Train tab) warm-starts the new
+network from the currently saved model's weights instead (`Trainer.start` clones its
+`state_dict` before the training thread starts, `_train` loads it in place of the random
+init). This only works if the key set is unchanged since that model was saved — rejected
+with a 400 otherwise, since the output layer's size depends on the number of keys. The
+optimizer's own state (Adam's momentum) isn't carried over, and each run draws a fresh
+random train/validation split, so early stopping's `best_val_loss` always starts over at
+epoch 1 of the new run rather than continuing a curve from the old one.
+
 ### 2.4  Persistence (backend)
 
 | Artefact | Storage |

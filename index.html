@@ -136,6 +136,9 @@
       <label style="font-size:12px;color:var(--muted);display:flex;gap:6px;align-items:center">
         Epochs <input id="train-epochs" type="number" min="1" max="2000" class="num-input">
       </label>
+      <label style="font-size:12px;color:var(--muted);display:flex;gap:6px;align-items:center">
+        <input id="train-resume" type="checkbox" disabled> Resume from current model
+      </label>
       <button id="btn-train" class="btn-primary">Start training</button>
       <button id="btn-stop-train" class="btn-ghost" disabled>Stop training</button>
       <button id="btn-delete-model" class="btn-danger" disabled>Delete model</button>
@@ -145,6 +148,7 @@
       Requires ≥ 8 samples for each of ≥ 2 keys. Training runs on the backend's GPU and saves the
       model there; progress updates live. 20 % of each key's samples are held out for validation.
     </p>
+    <p id="train-resume-note" style="margin-top:6px;color:var(--muted);font-size:12px"></p>
   </div>
 
   <div class="card">

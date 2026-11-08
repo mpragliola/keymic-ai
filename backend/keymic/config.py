@@ -35,6 +35,7 @@ class TrainParams:
     batch_size: int = 32
     lr: float = 1e-3
     val_split: float = 0.2
+    resume: bool = False   # warm-start from the current saved model instead of a fresh net
 
 
 def sample_length(sr: int) -> int:

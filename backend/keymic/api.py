@@ -35,6 +35,7 @@ class TrainRequest(BaseModel):
     batch_size: int = Field(32, ge=1, le=4096)
     lr: float = Field(1e-3, gt=0, lt=1)
     val_split: float = Field(0.2, gt=0, lt=0.9)
+    resume: bool = False
 
 
 def _http(e: Exception) -> HTTPException:

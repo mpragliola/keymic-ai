@@ -367,15 +367,23 @@ const btnTrain    = document.getElementById('btn-train');
 const btnStop     = document.getElementById('btn-stop-train');
 const btnDelete   = document.getElementById('btn-delete-model');
 const epochsInput = document.getElementById('train-epochs');
+const resumeInput = document.getElementById('train-resume');
 epochsInput.value = CFG.DEFAULT_EPOCHS;
 
 // Train only when idle; Stop only while running; Delete when a model exists
 // or a run is active (deleting stops the run so it can't save afterwards).
+// Resume needs an existing model to warm-start from, and only makes sense while idle.
 function updateTrainButtons() {
   const active = isActive(state.train.state);
   btnTrain.disabled  = !state.backend || active;
   btnStop.disabled   = !state.backend || state.train.state !== 'running';
   btnDelete.disabled = !state.backend || (!active && !state.model);
+  resumeInput.disabled = !state.backend || active || !state.model;
+  if (!state.model && resumeInput.checked) resumeInput.checked = false;
+  document.getElementById('train-resume-note').textContent = resumeInput.checked
+    ? 'Starts from the current model’s weights instead of a fresh network. Only works if the ' +
+      'set of trained keys hasn’t changed since; early stopping starts over regardless.'
+    : '';
 }
 
 // Applies a /train/status response: new log lines, chart, progress line.
@@ -414,12 +422,17 @@ async function pollTraining() {
   }
 }
 
+resumeInput.addEventListener('change', updateTrainButtons);
+
 btnTrain.addEventListener('click', async () => {
   btnTrain.disabled = true;
   clearLog();
   state.train.logTotal = 0;
   try {
-    applyStatus(await api.train({ epochs: Number(epochsInput.value) || CFG.DEFAULT_EPOCHS }));
+    applyStatus(await api.train({
+      epochs: Number(epochsInput.value) || CFG.DEFAULT_EPOCHS,
+      resume: resumeInput.checked,
+    }));
     pollTraining();
   } catch (e) {
     log('Error: ' + e.message);

@@ -332,9 +332,20 @@ class Trainer:
     def _load_saved(self) -> LoadedModel | None:
         if not self.model_path.exists():
             return None
-        # weights_only: the checkpoint holds only tensors and plain types, so no pickle code runs
-        ckpt = torch.load(self.model_path, map_location=self.device, weights_only=True)
-        net = KeystrokeCNN(len(ckpt["keys"])).to(self.device)
-        net.load_state_dict(ckpt["state_dict"])
-        net.eval()
-        return LoadedModel(net, ckpt["keys"], ckpt["sr"], MelSpectrogram(ckpt["sr"], self.device), ckpt["info"])
+        try:
+            # weights_only: the checkpoint holds only tensors and plain types, so no pickle code runs
+            ckpt = torch.load(self.model_path, map_location=self.device, weights_only=True)
+            net = KeystrokeCNN(len(ckpt["keys"])).to(self.device)
+            net.load_state_dict(ckpt["state_dict"])
+            net.eval()
+            return LoadedModel(net, ckpt["keys"], ckpt["sr"], MelSpectrogram(ckpt["sr"], self.device), ckpt["info"])
+        except Exception as e:
+            # A checkpoint saved by an older KeystrokeCNN (different layer sizes) raises a
+            # RuntimeError here. Failing to start the whole server over one stale file would be
+            # far worse than starting with no model — move it aside (never delete silently) and
+            # let the client discover there's no model the normal way, through GET /model.
+            stale = self.model_path.with_suffix(f".incompatible-{int(time.time())}")
+            self.model_path.rename(stale)
+            self._log(f"Saved model at {self.model_path} could not be loaded ({type(e).__name__}: {e}) — "
+                      f"moved aside to {stale.name}. Train a new one.")
+            return None

@@ -1,4 +1,4 @@
-import { CFG } from './config.js?v=14';
+import { CFG } from './config.js?v=15';
 
 // Lazy singleton — rebuilt only when the sample rate changes.
 let _fb = null;

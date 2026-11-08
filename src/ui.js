@@ -1,4 +1,4 @@
-import { CFG, displayKey } from './config.js?v=14';
+import { CFG, displayKey } from './config.js?v=15';
 
 // ─── Badge helpers ────────────────────────────────────────────────────────────
 export function setBadge(id, text, cls) {

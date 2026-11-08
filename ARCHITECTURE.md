@@ -2,14 +2,27 @@
 
 ## Overview
 
-KeyMic trains a Convolutional Neural Network (CNN) entirely in the browser
-to classify keyboard keys from their acoustic fingerprint.  No data ever
-leaves the machine; everything — capture, feature extraction, training, and
-inference — runs client-side with the Web Audio API and TensorFlow.js.
+KeyMic trains a Convolutional Neural Network (CNN) to classify keyboard keys
+from their acoustic fingerprint. Two local processes, nothing leaves the machine:
+
+| Part | Does |
+|------|------|
+| Browser (`index.html`, `src/`) | microphone capture, cutting each keystroke clip at its click (§1.1), sample browser, training progress UI, prediction UI |
+| Backend (`backend/`, PyTorch) | sample storage, spectrograms (§1.2–1.6), CNN training on the GPU (§2), prediction |
+
+```
+keydown ─► browser: cut 200 ms clip at the click ─► POST /samples/{key}   (record)
+                                                 └► POST /predict          (predict → key + probabilities)
+Train tab ─► POST /train ─► poll GET /train/status every 400 ms (log lines, per-epoch loss/acc) ─► GET /model
+```
+
+The browser still computes spectrograms with TensorFlow.js, only to draw the
+previews in the Samples tab; the JS and Python versions produce the same
+features (identical filterbank, same normalisation).
 
 ---
 
-## 1  Front-end: Mel Spectrogram
+## 1  Feature pipeline: keystroke clip → log-mel spectrogram
 
 Raw audio → 2-D image that the CNN can learn from.
 
@@ -55,7 +68,7 @@ Each 200 ms window is framed with:
 | Frame length | 512 samples | ≈ 11 ms at 44 100 Hz — shorter than a keystroke |
 | Hop length | 128 samples | 75 % overlap for temporal smoothness |
 | Window function | Hann | Reduces spectral leakage at frame boundaries |
-| Transform | Real FFT (`tf.spectral.rfft`) | Complex spectrum; power = `re² + im²` |
+| Transform | Real FFT (`torch.fft.rfft`; `tf.spectral.rfft` for browser previews) | Complex spectrum; power = `re² + im²` |
 
 ### 1.3  Mel filterbank
 
@@ -102,7 +115,7 @@ This fixes the CNN input shape.
 
 ---
 
-## 2  Back-end: Convolutional Neural Network
+## 2  Convolutional Neural Network (backend, PyTorch)
 
 ### 2.1  Architecture
 
@@ -143,7 +156,8 @@ Dense           N classes, Softmax
 | Batch normalisation | Stabilises training and allows higher learning rates |
 | GlobalAveragePooling instead of Flatten | Reduces parameter count; more robust to slight temporal misalignment |
 | Dropout 0.4 | Main regulariser — the dataset is typically < 500 samples total |
-| Softmax output | Multi-class probability vector; argmax gives the predicted key |
+| Softmax output | Multi-class probability vector; argmax gives the predicted key (applied at prediction time; training uses logits with `CrossEntropyLoss`) |
+| BatchNorm momentum 0.1 (PyTorch default) | Running statistics used at inference converge within the few hundred steps a small dataset gives |
 
 ### 2.3  Training
 
@@ -151,49 +165,33 @@ Dense           N classes, Softmax
 |----------------|-------|
 | Optimiser | Adam |
 | Learning rate | 0.001 |
-| Loss | `sparseCategoricalCrossentropy` |
+| Loss | `CrossEntropyLoss` |
 | Metric | Accuracy |
-| Epochs | 60 |
+| Epochs | 60 (adjustable in the Train tab) |
 | Batch size | 32 |
 | Validation split | 20 % per key (stratified) |
 
 Minimum to start: **8 samples per key**, **2 distinct keys**.
 Maximum stored per key: 50 (oldest dropped on overflow).
 
-### 2.4  Persistence
+### 2.4  Persistence (backend)
 
 | Artefact | Storage |
 |----------|---------|
-| Raw audio samples | IndexedDB via `localForage` (`ks-{key}` keys, ArrayBuffer) |
-| Sample counts | IndexedDB (`ks-counts`, JSON) |
-| Sample rate | IndexedDB (`ks-sr`) |
-| Trained model weights | IndexedDB via `model.save('indexeddb://keystroke-cnn')` |
-| Model key list | IndexedDB (`ks-model-keys`, JSON) |
+| Raw audio clips | `backend/data/samples/key_<hex>.npy` — float32 `[n, clip_length]` per key |
+| Sample rate | `backend/data/meta.json` |
+| Trained model | `backend/data/model.pt` — weights, key list, sample rate, metrics |
 
-Both samples and model survive page reloads and browser restarts.
+Training runs in a background thread on the GPU (spectrograms of the whole
+dataset in one batched pass). The API exposes start / stop / status / delete;
+a stopped run saves nothing. Endpoints and setup: `backend/README.md`.
 
----
-
-## 3  Python backend (GPU training)
-
-`backend/` re-implements the same pipeline in PyTorch so training runs on CUDA
-instead of WebGL. Spectrogram construction mirrors §1 (the mel filterbank is
-bit-identical to the JS one) and `KeystrokeCNN` mirrors the layer stack in §2.
-Differences:
-
-| Aspect | Browser (TF.js) | Backend (PyTorch) |
-|--------|-----------------|-------------------|
-| Spectrograms | per clip, during dataset build | whole dataset in one batched GPU pass |
-| Output layer | softmax inside the model | logits; `CrossEntropyLoss` / softmax at prediction |
-| Validation | stratified 20 % per key | same |
-| Storage | IndexedDB | `backend/data/samples/*.npy` + `model.pt` |
-
-Training runs in a background thread; the HTTP API exposes start / stop /
-status / delete. Endpoints and setup: `backend/README.md`.
+Samples recorded in the browser before the backend existed (IndexedDB) are
+offered for one-click upload on the Record tab (`src/legacy-store.js`).
 
 ---
 
-## 4  File structure
+## 3  File structure
 
 ```
 F:/dev/keymic/
@@ -202,10 +200,10 @@ F:/dev/keymic/
 │   └── main.css          Dark-theme stylesheet
 ├── src/
 │   ├── config.js         Shared constants and keyboard layout
-│   ├── audio.js          AudioCapture — ring buffer, mic init, snapshot
-│   ├── features.js       Mel filterbank (singleton) + computeMelSpec
-│   ├── store.js          IndexedDB persistence layer (localForage wrapper)
-│   ├── model.js          buildModel · trainFromStore · loadSavedModel · deleteSavedModel
+│   ├── audio.js          AudioCapture — ring buffer, click detection, latency calibration
+│   ├── api.js            Backend client (samples, training, model, predict)
+│   ├── features.js       Mel spectrogram in TF.js (Samples tab previews)
+│   ├── legacy-store.js   One-time upload of samples kept in IndexedDB by older versions
 │   ├── ui.js             All DOM helpers (badges, keyboard, charts, capture view)
 │   ├── samples.js        Samples tab: paginated clip browser (waveform, spectrogram, play, delete)
 │   └── app.js            Application orchestrator — state, event handlers
@@ -215,13 +213,7 @@ F:/dev/keymic/
 
 ---
 
-## 5  Running locally
+## 4  Running locally
 
-```bash
-cd F:/dev/keymic
-python -m http.server 8080
-# then open  http://localhost:8080
-```
-
-A local HTTP server is required for ES module imports and `getUserMedia`.
-Opening `index.html` directly as a `file://` URL will block both.
+See the root `README.md`: start the backend (`python run.py` in `backend/`),
+then serve the frontend (`python -m http.server 8080`) and open http://localhost:8080.

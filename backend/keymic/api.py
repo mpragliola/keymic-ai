@@ -8,7 +8,7 @@ from pathlib import Path
 
 import numpy as np
 import torch
-from fastapi import Body, FastAPI, HTTPException, Query, Request
+from fastapi import Body, FastAPI, HTTPException, Query, Request, Response
 from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
@@ -25,7 +25,9 @@ store = SampleStore(DATA_DIR)
 trainer = Trainer(store, DATA_DIR / "model.pt", DEVICE)
 
 app = FastAPI(title="KeyMic backend", version="1.0")
-app.add_middleware(CORSMiddleware, allow_origins=CORS_ORIGINS, allow_methods=["*"], allow_headers=["*"])
+# expose_headers: browsers hide non-standard response headers from JS unless listed
+app.add_middleware(CORSMiddleware, allow_origins=CORS_ORIGINS, allow_methods=["*"], allow_headers=["*"],
+                   expose_headers=["X-Sample-Rate", "X-Clip-Length", "X-Count"])
 
 
 class TrainRequest(BaseModel):
@@ -87,6 +89,34 @@ async def add_samples(key: str, request: Request, sr: int = Query(..., gt=0)):
     except StoreError as e:
         raise _http(e)
     return {"key": key, "count": count}
+
+
+@app.get("/samples/{key}")
+def download_samples(key: str):
+    """All clips of `key` as raw little-endian float32, concatenated oldest → newest."""
+    _check_key(key)
+    clips = store.load(key)
+    sr = store.sr
+    return Response(
+        content=clips.astype("<f4").tobytes(),
+        media_type="application/octet-stream",
+        headers={
+            "X-Sample-Rate": str(sr) if sr else "",
+            "X-Clip-Length": str(C.sample_length(sr) if sr else 0),
+            "X-Count": str(len(clips)),
+        },
+    )
+
+
+@app.delete("/samples/{key}/{index}")
+def delete_one_sample(key: str, index: int):
+    """Deletes one clip by storage index (0 = oldest)."""
+    _check_key(key)
+    trainer.stop()   # a run in progress was started on data that is changing
+    try:
+        return {"key": key, "count": store.delete_sample(key, index)}
+    except IndexError as e:
+        raise HTTPException(404, str(e))
 
 
 @app.delete("/samples/{key}")

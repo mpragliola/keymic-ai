@@ -23,10 +23,13 @@
 <!-- ── Header ─────────────────────────────────────────────────────────────── -->
 <header>
   <h1>🎹 KeyMic</h1>
+  <span id="badge-backend" class="badge">backend…</span>
   <span id="badge-mic"   class="badge">mic off</span>
   <span id="badge-data"  class="badge">no data</span>
   <span id="badge-model" class="badge">no model</span>
 </header>
+
+<div id="backend-banner" class="banner" hidden></div>
 
 <!-- ── Tabs ───────────────────────────────────────────────────────────────── -->
 <div class="tabs">
@@ -47,6 +50,16 @@
     <canvas id="waveform"></canvas>
     <p id="record-stats">0 keys ready · 0 samples total</p>
     <p id="capture-stats" style="font-size:12px;color:var(--muted);margin-top:4px">Latency: calibrating…</p>
+    <p id="record-error" style="font-size:12px;color:var(--danger);margin-top:4px"></p>
+  </div>
+
+  <div id="legacy-card" class="card" hidden>
+    <div class="card-title">Samples stored in this browser</div>
+    <p id="legacy-text" style="font-size:12px;color:var(--muted);margin-bottom:10px"></p>
+    <div class="btn-row">
+      <button id="btn-legacy-upload" class="btn-primary">Upload to backend</button>
+      <button id="btn-legacy-discard" class="btn-ghost">Discard</button>
+    </div>
   </div>
 
   <div class="card">
@@ -73,7 +86,7 @@
       <button id="btn-clear" class="btn-danger">Delete samples</button>
     </div>
     <p style="margin-top:10px;color:var(--muted);font-size:12px">
-      Samples persist in IndexedDB across reloads. The model is kept separately.<br>
+      Samples are stored by the backend (<code>backend/data</code>). The newest 50 per key are kept.<br>
       Green keys have ≥ 8 samples. Yellow keys need more.
     </p>
   </div>
@@ -103,20 +116,24 @@
 
   <div class="card">
     <div class="card-title">Train CNN on recorded data</div>
-    <div class="btn-row">
+    <div class="btn-row" style="align-items:center">
+      <label style="font-size:12px;color:var(--muted);display:flex;gap:6px;align-items:center">
+        Epochs <input id="train-epochs" type="number" min="1" max="2000" class="num-input">
+      </label>
       <button id="btn-train" class="btn-primary">Start training</button>
       <button id="btn-stop-train" class="btn-ghost" disabled>Stop training</button>
       <button id="btn-delete-model" class="btn-danger" disabled>Delete model</button>
       <button id="btn-delete-samples" class="btn-danger">Delete samples</button>
     </div>
     <p style="margin-top:10px;color:var(--muted);font-size:12px">
-      Requires ≥ 8 samples for each of ≥ 2 keys. Training runs in-browser with TensorFlow.js and
-      saves the model to IndexedDB automatically.
+      Requires ≥ 8 samples for each of ≥ 2 keys. Training runs on the backend's GPU and saves the
+      model there; progress updates live. 20 % of each key's samples are held out for validation.
     </p>
   </div>
 
   <div class="card">
     <div class="card-title">Training log</div>
+    <p id="train-progress" style="font-family:var(--mono);font-size:12px;margin-bottom:8px"></p>
     <pre id="train-log"></pre>
     <canvas id="train-chart"></canvas>
   </div>
@@ -157,7 +174,7 @@
 </div>
 
 <!-- App entry point (ES module) -->
-<script type="module" src="src/app.js?v=14"></script>
+<script type="module" src="src/app.js?v=15"></script>
 
 </body>
 </html>

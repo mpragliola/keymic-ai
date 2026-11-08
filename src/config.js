@@ -1,6 +1,11 @@
 // Shared configuration constants and keyboard layout.
 
 export const CFG = {
+  // Backend
+  BACKEND_URL: 'http://127.0.0.1:8000',
+  POLL_MS:     400,   // training status poll interval while a run is active
+  DEFAULT_EPOCHS: 60,
+
   // Audio capture
   CAPTURE_MS:  200,   // clip length per keystroke (ms)
   PRE_ONSET_MS: 20,   // clip starts this long before the detected click
@@ -10,8 +15,8 @@ export const CFG = {
   CALIBRATION_STROKES: 5,        // accepted clicks needed before latency counts as measured
   CALIBRATION_HISTORY: 20,       // latency = median offset of the last N clicks
   MIN_PEAK_DB: 6,     // default click threshold (dB over background); adjustable in the UI
-  BACKGROUND_PERCENTILE: 20,
-  DETECT_HIGHPASS_HZ: 800,   // click detection runs on high-passed audio (removes fan/hum/rumble)  // background level = this percentile of the energy envelope
+  BACKGROUND_PERCENTILE: 20, // background level = this percentile of the energy envelope
+  DETECT_HIGHPASS_HZ: 800,   // click detection runs on high-passed audio (removes fan/hum/rumble)
   RING_S:        4,   // ring buffer depth (seconds)
 
   // Feature extraction
@@ -22,14 +27,10 @@ export const CFG = {
   HOP_LEN:     128,   // STFT hop size (samples)
   N_FRAMES:     64,   // fixed time-axis length fed to the CNN
 
-  // Training
-  MAX_SAMPLES:  50,   // hard cap per key
-  MIN_SAMPLES:   8,   // minimum samples for a key to enter training
-  MIN_KEYS:      2,   // minimum distinct keys to allow training
-  EPOCHS:       60,
-  BATCH_SIZE:   32,
-  VAL_SPLIT:   0.2,
-  LR:         0.001,
+  // Training (backend enforces these; kept here for UI hints)
+  MAX_SAMPLES:  50,
+  MIN_SAMPLES:   8,
+  MIN_KEYS:      2,
 };
 
 export const KEYBOARD_ROWS = [

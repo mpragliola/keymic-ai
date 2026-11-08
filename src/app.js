@@ -1,32 +1,36 @@
-import { CFG, KEYBOARD_ROWS, TRACKED } from './config.js?v=14';
-import { AudioCapture } from './audio.js?v=14';
-import { getFilterbank, computeMelSpec } from './features.js?v=14';
-import { Store } from './store.js?v=14';
-import { initSamplesTab } from './samples.js?v=14';
-import { trainFromStore, loadSavedModel, deleteSavedModel } from './model.js?v=14';
+import { CFG, KEYBOARD_ROWS, TRACKED } from './config.js?v=15';
+import { AudioCapture } from './audio.js?v=15';
+import { getFilterbank, computeMelSpec } from './features.js?v=15';
+import { api } from './api.js?v=15';
+import { LegacyStore } from './legacy-store.js?v=15';
+import { initSamplesTab } from './samples.js?v=15';
 import {
   setBadge, log, clearLog,
   buildKeyboardDOM, updateKeyboard, flashKey, updateRecordStats,
   drawWaveform, drawChart, drawCapture,
   renderConfidence, updatePredDisplay, updatePredStats, prependHistory,
-} from './ui.js?v=14';
+} from './ui.js?v=15';
+
+// Samples, training and prediction live in the Python backend; the browser
+// captures and cuts keystroke audio, shows progress and draws previews.
 
 // ─── Shared state ─────────────────────────────────────────────────────────────
 const state = {
-  audio:        null,     // AudioCapture instance
-  micActive:    false,
-  samples:      {},       // { key → Float32Array[] }  samples for each key
-  loading:      {},       // { key → Promise<Float32Array[]> }  in-flight loads
-  counts:       {},       // { key → n }  persisted counts
-  model:        null,     // tf.LayersModel
-  modelKeys:    null,     // string[]
-  predTotal:    0,
-  predCorrect:  0,
-  chartData:    { trainAcc: [], valAcc: [] },
-  animFrame:    null,
-  rejected:     0,        // presses ignored because no click was detected
-  trainAbort:   null,     // AbortController of the running training, if any
+  audio:       null,     // AudioCapture instance
+  micActive:   false,
+  backend:     null,     // /health response; null while the backend is unreachable
+  counts:      {},       // { key → n } as stored in the backend
+  sr:          null,     // sample rate of the stored samples
+  model:       null,     // /model info (keys, sr, val_acc, …); null when none
+  train:       { state: 'idle', logTotal: 0, polling: false },
+  predTotal:   0,
+  predCorrect: 0,
+  animFrame:   null,
+  rejected:    0,        // presses ignored because no click was detected
 };
+
+const isActive = s => s === 'running' || s === 'stopping';
+const sleep = ms => new Promise(r => setTimeout(r, ms));
 
 // ─── Tab switching ────────────────────────────────────────────────────────────
 document.querySelectorAll('.tab-btn').forEach(btn => {
@@ -54,7 +58,7 @@ async function startMic() {
     await state.audio.init();
     state.audio.minPeakDb = Number(thresholdInput.value);
     state.micActive = true;
-    setBadge('badge-mic', 'mic on', 'green');
+    setBadge('badge-mic', `mic ${state.audio.sr / 1000} kHz`, 'green');
     startWaveformLoop();
     return true;
   } catch (e) {
@@ -75,15 +79,8 @@ function updateMicButtons() {
   }
 }
 
-// Tells the user what is missing before predictions can run
-function updatePredStatus() {
-  const el = document.getElementById('pred-status');
-  if (!state.model)          el.textContent = 'No trained model — train one in the Train tab.';
-  else if (!state.micActive) el.textContent = 'Enable the mic, then type a key.';
-  else                       el.textContent = '';
-}
-
 document.getElementById('btn-mic').addEventListener('click', startMic);
+document.getElementById('btn-mic-predict').addEventListener('click', startMic);
 
 // ─── Click threshold ─────────────────────────────────────────────────────────
 // Persisted per browser; localStorage can throw (e.g. storage disabled).
@@ -103,7 +100,6 @@ thresholdInput.addEventListener('input', () => {
   try { localStorage.setItem('keymic-threshold-db', String(db)); } catch {}
 });
 applyThreshold(loadThreshold());
-document.getElementById('btn-mic-predict').addEventListener('click', startMic);
 
 // ─── Waveform animation ───────────────────────────────────────────────────────
 const waveCanvas = document.getElementById('waveform');
@@ -111,9 +107,7 @@ const waveCanvas = document.getElementById('waveform');
 function startWaveformLoop() {
   if (state.animFrame) return;
   const tick = () => {
-    if (state.micActive && waveCanvas) {
-      drawWaveform(waveCanvas, state.audio.getWaveform());
-    }
+    if (state.micActive) drawWaveform(waveCanvas, state.audio.getWaveform());
     state.animFrame = requestAnimationFrame(tick);
   };
   state.animFrame = requestAnimationFrame(tick);
@@ -125,19 +119,15 @@ function stopWaveformLoop() {
 
 // ─── Keyboard capture ─────────────────────────────────────────────────────────
 document.addEventListener('keydown', e => {
+  if (e.target.matches?.('input, select, textarea')) return;   // typing in a form field
   const k = e.key === ' ' ? ' ' : e.key.toLowerCase();
   if (!TRACKED.has(k)) return;
   e.preventDefault();
   if (e.repeat) return;   // held key: auto-repeat events have no new sound
 
-  // Determine current mode
   const activeTab = document.querySelector('.tab-btn.active')?.dataset.tab;
-
-  if (activeTab === 'record' && state.micActive) {
-    recordKey(k, e.timeStamp);
-  } else if (activeTab === 'predict' && state.model) {
-    predictKey(k, e.timeStamp);
-  }
+  if (activeTab === 'record' && state.micActive) recordKey(k, e.timeStamp);
+  else if (activeTab === 'predict' && state.micActive && state.model) predictKey(k, e.timeStamp);
 });
 
 // ─── Capture stats ───────────────────────────────────────────────────────────
@@ -146,226 +136,287 @@ function updateCaptureStats(cut) {
   if (!cut.audio) state.rejected++;
   drawCapture(document.getElementById('capture-view'), cut);
   const lat = cut.latencyMs;
-  const el = document.getElementById('capture-stats');
-  el.textContent =
+  document.getElementById('capture-stats').textContent =
     (lat === null ? 'Latency: calibrating…' : `Latency: ${Math.round(lat)} ms`) +
     ` · last click ${cut.peakDb.toFixed(0)} dB over background` +
     (state.rejected ? ` · ${state.rejected} press${state.rejected > 1 ? 'es' : ''} ignored (no click)` : '');
 }
 
-// ─── Sample access ───────────────────────────────────────────────────────────
-// Samples persisted in earlier sessions are loaded before use, so writes save
-// the full set instead of overwriting it with this session only. One shared
-// load promise per key: rapid repeat presses must not each load (and then
-// overwrite) the stored set independently.
-async function getKeySamples(k) {
-  if (!state.samples[k]) {
-    state.loading[k] ??= Store.loadKey(k);
-    const loaded = await state.loading[k];
-    state.samples[k] ??= loaded;
-  }
-  return state.samples[k];
+function showRecordError(msg) {
+  document.getElementById('record-error').textContent = msg || '';
 }
 
-async function deleteSample(k, index) {
-  const arr = await getKeySamples(k);
-  arr.splice(index, 1);
-  if (arr.length) {
-    state.counts[k] = arr.length;
-    await Store.saveKey(k, arr);
-  } else {
-    delete state.counts[k];
-    await Store.removeKey(k);
-  }
-  await Store.setCounts(state.counts);
+// ─── Samples (backend) ───────────────────────────────────────────────────────
+function renderCounts() {
   updateKeyboard(state.counts);
   updateRecordStats(state.counts);
+  const total = Object.values(state.counts).reduce((s, n) => s + n, 0);
+  setBadge('badge-data', total ? `${total} samples` : 'no data', total ? 'green' : '');
+}
+
+async function refreshSamples() {
+  const s = await api.samples();
+  state.counts = s.counts;
+  state.sr = s.sr;
+  renderCounts();
+}
+
+async function deleteSample(key, index) {
+  const r = await api.deleteSample(key, index);
+  if (r.count) state.counts[key] = r.count;
+  else delete state.counts[key];
+  renderCounts();
 }
 
 const samplesTab = initSamplesTab({
   getCounts:  () => state.counts,
-  getSamples: getKeySamples,
+  getSamples: key => api.keySamples(key),
   deleteSample,
-  getSr:      () => Store.getSr(),
+  getSr:      async () => state.sr,
   getFilterbank,
   computeMelSpec,
 });
+
+async function deleteSamples() {
+  if (!confirm('Delete all recorded samples on the backend? The trained model is kept.')) return;
+  try {
+    await api.deleteSamples();   // also stops a running training
+    state.counts = {};
+    state.sr = null;
+    renderCounts();
+    log('Samples deleted.');
+  } catch (e) {
+    alert('Could not delete samples: ' + e.message);
+  }
+}
+document.getElementById('btn-clear').addEventListener('click', deleteSamples);
+document.getElementById('btn-delete-samples').addEventListener('click', deleteSamples);
 
 // ─── Record ───────────────────────────────────────────────────────────────────
 async function recordKey(k, eventTime) {
   const cut = await state.audio.captureKeystroke(eventTime);
   updateCaptureStats(cut);
   if (!cut.audio) { flashKey(k, 'rejected'); return; }
-  flashKey(k, 'recording');
-  const audio = cut.audio;
-
-  await getKeySamples(k);
-  if (state.samples[k].length >= CFG.MAX_SAMPLES) state.samples[k].shift();
-  state.samples[k].push(audio);
-  state.counts[k] = state.samples[k].length;
-
-  updateKeyboard(state.counts);
-  updateRecordStats(state.counts);
-
-  // Persist
-  await Store.saveKey(k, state.samples[k]);
-  await Store.setCounts(state.counts);
-  await Store.saveSr(state.audio.sr);
+  try {
+    const r = await api.addSamples(k, state.audio.sr, cut.audio);
+    flashKey(k, 'recording');
+    state.counts[k] = r.count;
+    state.sr = state.audio.sr;
+    renderCounts();
+    showRecordError('');
+  } catch (e) {
+    flashKey(k, 'rejected');
+    showRecordError('Not saved: ' + e.message);
+  }
 }
 
 // ─── Predict ─────────────────────────────────────────────────────────────────
+function updatePredStatus() {
+  const el = document.getElementById('pred-status');
+  if (!state.backend)        el.textContent = 'Backend offline — start it with "python run.py" in backend/.';
+  else if (!state.model)     el.textContent = 'No trained model — train one in the Train tab.';
+  else if (!state.micActive) el.textContent = 'Enable the mic, then type a key.';
+  else if (state.model.sr !== state.audio.sr)
+    el.textContent = `Model was trained at ${state.model.sr / 1000} kHz but the mic runs at ${state.audio.sr / 1000} kHz.`;
+  else                       el.textContent = '';
+}
+
 async function predictKey(actualKey, eventTime) {
-  if (!state.model || !state.micActive) return;
   const cut = await state.audio.captureKeystroke(eventTime);
   updateCaptureStats(cut);
   if (!cut.audio) {
     document.getElementById('pred-status').textContent = 'No keystroke sound detected — press ignored.';
     return;
   }
+  let r;
+  try {
+    r = await api.predict(state.audio.sr, cut.audio);
+  } catch (e) {
+    document.getElementById('pred-status').textContent = 'Prediction failed: ' + e.message;
+    return;
+  }
   updatePredStatus();
-  const audio = cut.audio;
-  const fb    = getFilterbank(state.audio.sr);
-  const spec  = computeMelSpec(audio, fb);
-  const input = spec.expandDims(0);               // [1, N_FRAMES, N_MELS, 1]
-  const out   = state.model.predict(input);
-  const probs = Array.from(out.dataSync());
-  input.dispose(); spec.dispose(); out.dispose();
-
-  const predIdx = probs.indexOf(Math.max(...probs));
-  const predKey = state.modelKeys[predIdx];
+  const keys  = r.probs.map(p => p.key);
+  const probs = r.probs.map(p => p.p);
 
   state.predTotal++;
-  if (predKey === actualKey) state.predCorrect++;
-
+  if (r.key === actualKey) state.predCorrect++;
   flashKey(actualKey, 'predicting');
-
-  renderConfidence(document.getElementById('conf-bars'), probs, state.modelKeys);
-  updatePredDisplay(predKey, actualKey);
+  renderConfidence(document.getElementById('conf-bars'), probs, keys);
+  updatePredDisplay(r.key, actualKey);
   updatePredStats(state.predTotal, state.predCorrect);
-  prependHistory(document.getElementById('pred-history'), actualKey, predKey, probs, state.modelKeys);
+  prependHistory(document.getElementById('pred-history'), actualKey, r.key, probs, keys);
 }
 
-// ─── Train ────────────────────────────────────────────────────────────────────
-const btnTrain  = document.getElementById('btn-train');
-const btnStop   = document.getElementById('btn-stop-train');
-const btnDelete = document.getElementById('btn-delete-model');
+document.getElementById('btn-reset-stats').addEventListener('click', () => {
+  state.predTotal = state.predCorrect = 0;
+  updatePredStats(0, 0);
+  document.getElementById('pred-history').innerHTML = '';
+});
 
-// Train is disabled while a run is active; Stop only while one is active;
-// Delete whenever a model exists or a run is active.
+// ─── Model ───────────────────────────────────────────────────────────────────
+async function refreshModel() {
+  state.model = await api.model();
+  const m = state.model;
+  setBadge('badge-model',
+    m ? `model: ${m.keys.length} keys · val ${(m.val_acc * 100).toFixed(0)}%` : 'no model',
+    m ? 'green' : '');
+  updateTrainButtons();
+  updatePredStatus();
+}
+
+// ─── Train (backend, polled for live progress) ───────────────────────────────
+const btnTrain    = document.getElementById('btn-train');
+const btnStop     = document.getElementById('btn-stop-train');
+const btnDelete   = document.getElementById('btn-delete-model');
+const epochsInput = document.getElementById('train-epochs');
+epochsInput.value = CFG.DEFAULT_EPOCHS;
+
+// Train only when idle; Stop only while running; Delete when a model exists
+// or a run is active (deleting stops the run so it can't save afterwards).
 function updateTrainButtons() {
-  const training = !!state.trainAbort;
-  btnTrain.disabled  = training;
-  btnStop.disabled   = !training;
-  btnDelete.disabled = !training && !state.model;
+  const active = isActive(state.train.state);
+  btnTrain.disabled  = !state.backend || active;
+  btnStop.disabled   = !state.backend || state.train.state !== 'running';
+  btnDelete.disabled = !state.backend || (!active && !state.model);
+}
+
+// Applies a /train/status response: new log lines, chart, progress line.
+function applyStatus(s) {
+  for (const line of s.logs) log(line);
+  state.train.logTotal = s.log_total;
+  state.train.state = s.state;
+  drawChart(document.getElementById('train-chart'), { trainAcc: s.history.acc, valAcc: s.history.val_acc });
+  const last = i => s.history[i].at(-1);
+  document.getElementById('train-progress').textContent =
+    s.state === 'idle' ? '' :
+    `${s.state} · epoch ${s.epoch}/${s.epochs}` +
+    (s.history.acc.length ? ` · acc ${(last('acc') * 100).toFixed(1)}% · val_acc ${(last('val_acc') * 100).toFixed(1)}%` : '');
+  updateTrainButtons();
+}
+
+// Polls the run until it ends. Only new log lines are requested (since=N);
+// if the backend restarted, its log is shorter than ours and is re-read whole.
+async function pollTraining() {
+  if (state.train.polling) return;
+  state.train.polling = true;
+  try {
+    while (true) {
+      const s = await api.trainStatus(state.train.logTotal);
+      if (s.log_total < state.train.logTotal) { clearLog(); state.train.logTotal = 0; continue; }
+      applyStatus(s);
+      if (!isActive(s.state)) break;
+      await sleep(CFG.POLL_MS);
+    }
+    await refreshModel();
+  } catch (e) {
+    log('Lost contact with the backend: ' + e.message);
+    connectBackend();
+  } finally {
+    state.train.polling = false;
+  }
 }
 
 btnTrain.addEventListener('click', async () => {
-  const abort = new AbortController();
-  state.trainAbort = abort;
-  updateTrainButtons();
+  btnTrain.disabled = true;
   clearLog();
-  state.chartData = { trainAcc: [], valAcc: [] };
-
+  state.train.logTotal = 0;
   try {
-    const result = await trainFromStore(
-      msg => log(msg),
-      (epoch, logs) => {
-        state.chartData.trainAcc.push(logs.acc    ?? logs.accuracy    ?? 0);
-        state.chartData.valAcc.push(logs.val_acc ?? logs.val_accuracy ?? 0);
-        const c = document.getElementById('train-chart');
-        if (c) drawChart(c, state.chartData);
-      },
-      abort.signal,
-    );
-    if (result) {
-      state.model?.dispose();
-      state.model     = result.model;
-      state.modelKeys = result.keys;
-      setBadge('badge-model', `model: ${result.keys.length} keys`, 'green');
-    }
-    updatePredStatus();
+    applyStatus(await api.train({ epochs: Number(epochsInput.value) || CFG.DEFAULT_EPOCHS }));
+    pollTraining();
   } catch (e) {
     log('Error: ' + e.message);
-  } finally {
-    state.trainAbort = null;
     updateTrainButtons();
   }
 });
 
-btnStop.addEventListener('click', () => {
-  if (!state.trainAbort) return;
-  log('Stopping after the current batch…');
-  state.trainAbort.abort();
+btnStop.addEventListener('click', async () => {
   btnStop.disabled = true;
+  try { await api.stopTraining(); } catch (e) { log('Error: ' + e.message); }
 });
 
 btnDelete.addEventListener('click', async () => {
   if (!confirm('Delete the trained model? Recorded samples are kept.')) return;
-  // A running training would otherwise save a new model right after deletion
-  state.trainAbort?.abort();
-  state.model?.dispose();
-  state.model     = null;
-  state.modelKeys = null;
-  await deleteSavedModel();
-  setBadge('badge-model', 'no model', '');
-  log('Model deleted.');
-  updateTrainButtons();
-  updatePredStatus();
+  try {
+    await api.deleteModel();   // also stops a running training
+    log('Model deleted.');
+  } catch (e) {
+    log('Error: ' + e.message);
+  }
+  await refreshModel().catch(() => {});
 });
 
-// ─── Delete samples ───────────────────────────────────────────────────────────
-// Available from both Record and Train tabs. A running training is stopped
-// first; the saved model is kept (it has its own Delete button).
-async function deleteSamples() {
-  if (!confirm('Delete all recorded samples? The trained model is kept.')) return;
-  state.trainAbort?.abort();
-  await Store.clearAll();
-  state.samples = {};
-  state.loading = {};
-  state.counts  = {};
-  updateKeyboard({});
-  updateRecordStats({});
-  setBadge('badge-data', 'no data', '');
-  log('Samples deleted.');
+// ─── Samples recorded in the browser before the backend ──────────────────────
+async function checkLegacy() {
+  const counts = await LegacyStore.getCounts();
+  const keys = Object.keys(counts).filter(k => counts[k] > 0);
+  const total = keys.reduce((s, k) => s + counts[k], 0);
+  const card = document.getElementById('legacy-card');
+  card.hidden = total === 0;
+  if (total) document.getElementById('legacy-text').textContent =
+    `${total} samples for ${keys.length} key${keys.length > 1 ? 's' : ''} are stored in this browser from before ` +
+    `the backend. Upload them, or discard them if they were recorded before the click-detection fix.`;
+  document.getElementById('btn-legacy-upload').disabled = !state.backend;
 }
 
-document.getElementById('btn-clear').addEventListener('click', deleteSamples);
-document.getElementById('btn-delete-samples').addEventListener('click', deleteSamples);
-
-// ─── Reset stats ──────────────────────────────────────────────────────────────
-document.getElementById('btn-reset-stats')?.addEventListener('click', () => {
-  state.predTotal = state.predCorrect = 0;
-  updatePredStats(0, 0);
-  const h = document.getElementById('pred-history');
-  if (h) h.innerHTML = '';
+document.getElementById('btn-legacy-upload').addEventListener('click', async () => {
+  const msg = document.getElementById('legacy-text');
+  try {
+    const sr = await LegacyStore.getSr();
+    const counts = await LegacyStore.getCounts();
+    for (const key of Object.keys(counts)) {
+      const clips = await LegacyStore.loadKey(key);
+      if (!clips.length) continue;
+      const all = new Float32Array(clips.length * clips[0].length);
+      clips.forEach((c, i) => all.set(c, i * c.length));
+      msg.textContent = `Uploading ${clips.length} samples for "${key === ' ' ? 'SPC' : key}"…`;
+      await api.addSamples(key, sr, all);   // one request per key: clips concatenated
+    }
+    await LegacyStore.clearAll();
+    await refreshSamples();
+    await checkLegacy();
+  } catch (e) {
+    msg.textContent = 'Upload failed: ' + e.message + ' — nothing was deleted from the browser.';
+  }
 });
 
-// ─── Init ─────────────────────────────────────────────────────────────────────
-async function init() {
-  buildKeyboardDOM(KEYBOARD_ROWS, document.getElementById('keyboard'));
+document.getElementById('btn-legacy-discard').addEventListener('click', async () => {
+  if (!confirm('Discard the samples stored in this browser? Samples on the backend are not affected.')) return;
+  await LegacyStore.clearAll();
+  await checkLegacy();
+});
 
-  // Restore persisted state
-  // Recompute counts from stored buffers (fixes counts that drifted in earlier versions)
-  state.counts = await Store.repairCounts();
-  updateKeyboard(state.counts);
-  updateRecordStats(state.counts);
-
-  const total = Object.values(state.counts).reduce((s, n) => s + n, 0);
-  if (total > 0)
-    setBadge('badge-data', `${total} samples`, 'green');
-
-  // Try loading saved model
-  const saved = await loadSavedModel();
-  if (saved) {
-    state.model     = saved.model;
-    state.modelKeys = saved.keys;
-    setBadge('badge-model', `model: ${saved.keys.length} keys`, 'green');
-    log(`Restored model for keys: ${saved.keys.join(', ')}`);
-  } else {
-    setBadge('badge-model', 'no model', '');
+// ─── Backend connection ──────────────────────────────────────────────────────
+// Retries every 3 s while unreachable; on (re)connect loads samples, model and
+// any training run in progress (e.g. started before a page reload).
+let retryTimer = null;
+async function connectBackend() {
+  clearTimeout(retryTimer);
+  try {
+    state.backend = await api.health();
+    const gpu = state.backend.gpu;
+    setBadge('badge-backend', gpu ? `GPU: ${gpu}` : 'backend: CPU only', gpu ? 'green' : 'yellow');
+    document.getElementById('backend-banner').hidden = true;
+    await Promise.all([refreshSamples(), refreshModel()]);
+    const s = await api.trainStatus(0);
+    clearLog();
+    state.train.logTotal = 0;
+    applyStatus(s);
+    if (isActive(s.state)) pollTraining();
+  } catch (e) {
+    state.backend = null;
+    setBadge('badge-backend', 'backend offline', 'red');
+    const banner = document.getElementById('backend-banner');
+    banner.hidden = false;
+    banner.textContent = `Backend not reachable at ${CFG.BACKEND_URL}. Start it: cd backend → python run.py. Retrying…`;
+    retryTimer = setTimeout(connectBackend, 3000);
   }
   updateTrainButtons();
   updatePredStatus();
+  checkLegacy();
 }
 
-init();
+// ─── Init ─────────────────────────────────────────────────────────────────────
+buildKeyboardDOM(KEYBOARD_ROWS, document.getElementById('keyboard'));
+renderCounts();
+connectBackend();

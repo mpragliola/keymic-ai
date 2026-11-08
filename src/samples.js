@@ -1,4 +1,4 @@
-import { displayKey } from './config.js?v=14';
+import { displayKey } from './config.js?v=15';
 
 const PAGE_SIZE = 12;
 
@@ -6,7 +6,7 @@ const PAGE_SIZE = 12;
 // each with waveform, log-mel spectrogram (the CNN's input), playback and delete.
 //
 // deps: { getCounts() → {key: n}, getSamples(key) → Promise<Float32Array[]>,
-//         deleteSample(key, index) → Promise, getSr() → Promise<number>,
+//         deleteSample(key, index) → Promise, getSr() → Promise<number|null>,
 //         getFilterbank(sr), computeMelSpec(audio, fb) }
 export function initSamplesTab(deps) {
   const keySel = document.getElementById('samples-key');
@@ -17,11 +17,17 @@ export function initSamplesTab(deps) {
   let page = 0;
   let playCtx = null;   // created on first Play click (needs a user gesture)
 
-  keySel.addEventListener('change', () => { page = 0; render(); });
-  prev.addEventListener('click', () => { page--; render(); });
-  next.addEventListener('click', () => { page++; render(); });
+  const safeRender = () => render().catch(e => { label.textContent = 'Error: ' + e.message; });
+  keySel.addEventListener('change', () => { page = 0; safeRender(); });
+  prev.addEventListener('click', () => { page--; safeRender(); });
+  next.addEventListener('click', () => { page++; safeRender(); });
 
+  // Errors (e.g. backend offline) are shown in the page label instead of thrown
   async function refresh() {
+    try { await refreshInner(); } catch (e) { label.textContent = 'Error: ' + e.message; }
+  }
+
+  async function refreshInner() {
     const counts = deps.getCounts();
     const keys = Object.keys(counts).filter(k => counts[k] > 0).sort();
     const current = keySel.value;
@@ -47,6 +53,7 @@ export function initSamplesTab(deps) {
     next.disabled = page >= pages - 1;
 
     const sr = await deps.getSr();
+    if (!sr) return;
     const fb = deps.getFilterbank(sr);
     // Newest first: display position i ↔ storage index samples.length-1-i
     for (let i = page * PAGE_SIZE; i < Math.min(samples.length, (page + 1) * PAGE_SIZE); i++) {
@@ -78,7 +85,8 @@ export function initSamplesTab(deps) {
 
     el.querySelector('.sample-play').addEventListener('click', () => play(audio, sr));
     el.querySelector('.sample-del').addEventListener('click', async () => {
-      await deps.deleteSample(key, idx);
+      try { await deps.deleteSample(key, idx); }
+      catch (e) { label.textContent = 'Delete failed: ' + e.message; return; }
       await refresh();
     });
     return el;

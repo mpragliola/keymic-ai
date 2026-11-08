@@ -1,4 +1,4 @@
-import { CFG } from './config.js?v=14';
+import { CFG } from './config.js?v=15';
 
 // Continuously fills a ring buffer from the microphone and cuts keystroke
 // clips aligned to the sound itself.

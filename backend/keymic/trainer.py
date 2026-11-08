@@ -22,6 +22,29 @@ from .store import SampleStore, SampleRateMismatch, StoreError
 CHECKPOINT_FORMAT = 1
 
 
+def _augment(clips: torch.Tensor, shift_max: int) -> torch.Tensor:
+    """Random gain, noise and zero-padded time shift, independently per clip in the batch.
+
+    Forces the net to key on the keystroke's actual acoustic shape rather than the exact
+    loudness/timing/noise floor of the recording session it happened to be captured in.
+    """
+    B, L = clips.shape
+    dev = clips.device
+
+    if shift_max > 0:
+        shift = torch.randint(-shift_max, shift_max + 1, (B,), device=dev)
+        idx = torch.arange(L, device=dev).unsqueeze(0) - shift.unsqueeze(1)
+        valid = (idx >= 0) & (idx < L)
+        clips = torch.gather(clips, 1, idx.clamp(0, L - 1)) * valid
+
+    gain = torch.empty(B, 1, device=dev).uniform_(*C.AUG_GAIN_RANGE)
+    clips = clips * gain
+
+    rms = clips.pow(2).mean(dim=1, keepdim=True).sqrt()
+    noise_level = torch.empty(B, 1, device=dev).uniform_(0.0, C.AUG_NOISE_MAX)
+    return clips + torch.randn_like(clips) * rms * noise_level
+
+
 class TrainingBusy(RuntimeError):
     pass
 
@@ -170,12 +193,9 @@ class Trainer:
             labels += [ci] * len(a)
         labels_np = np.asarray(labels)
 
-        # Spectrograms for the whole dataset, computed once on the GPU
         mel = MelSpectrogram(sr, dev)
-        audio = torch.from_numpy(np.concatenate(clips)).to(dev)
-        x = torch.cat([mel(audio[i:i + 512]) for i in range(0, len(audio), 512)])
+        audio = torch.from_numpy(np.concatenate(clips)).to(dev)   # [N, L] raw clips, kept for per-epoch augmentation
         y = torch.from_numpy(labels_np).to(dev)
-        del audio
 
         # Stratified split: VAL_SPLIT of every key goes to validation, so each
         # key appears in both sets.
@@ -191,10 +211,16 @@ class Trainer:
         val_idx = torch.tensor(val_idx, device=dev)
         self._log(f"Total {len(labels)} samples ({len(train_idx)} train / {len(val_idx)} validation)")
 
+        # Validation spectrograms are fixed (never augmented) so val_acc tracks real generalization
+        x_val = torch.cat([mel(audio[val_idx[i:i + 512]]) for i in range(0, len(val_idx), 512)])
+        y_val = y[val_idx]
+
         net = KeystrokeCNN(len(keys)).to(dev)
-        opt = torch.optim.Adam(net.parameters(), lr=p.lr)
+        opt = torch.optim.Adam(net.parameters(), lr=p.lr, weight_decay=C.WEIGHT_DECAY)
         loss_fn = nn.CrossEntropyLoss()
+        shift_max = int(C.AUG_SHIFT_MS * sr / 1000 + 0.5)
         t0 = time.perf_counter()
+        v_logits = None
 
         for epoch in range(p.epochs):
             net.train()
@@ -205,7 +231,8 @@ class Trainer:
                 if self._stop.is_set():
                     break
                 idx = perm[b:b + p.batch_size]
-                logits = net(x[idx])
+                batch_x = mel(_augment(audio[idx], shift_max))
+                logits = net(batch_x)
                 loss = loss_fn(logits, y[idx])
                 opt.zero_grad(set_to_none=True)
                 loss.backward()
@@ -218,9 +245,9 @@ class Trainer:
 
             net.eval()
             with torch.no_grad():
-                v_logits = torch.cat([net(x[val_idx[i:i + 512]]) for i in range(0, len(val_idx), 512)])
-                v_loss = loss_fn(v_logits, y[val_idx]).item()
-                v_acc = (v_logits.argmax(1) == y[val_idx]).float().mean().item()
+                v_logits = torch.cat([net(x_val[i:i + 512]) for i in range(0, len(x_val), 512)])
+                v_loss = loss_fn(v_logits, y_val).item()
+                v_acc = (v_logits.argmax(1) == y_val).float().mean().item()
             tr_loss = loss_sum.item() / len(train_idx)
             tr_acc = correct.item() / len(train_idx)
 
@@ -234,6 +261,8 @@ class Trainer:
         if self._stop.is_set():
             return self._finish_stopped()
 
+        confusion = self._log_confusion(keys, y_val, v_logits.argmax(1))
+
         info = {
             "trained_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
             "epochs": p.epochs,
@@ -242,6 +271,7 @@ class Trainer:
             "val_acc": self.history["val_acc"][-1],
             "train_seconds": round(time.perf_counter() - t0, 2),
             "device": name,
+            "confusion": confusion,   # {"keys": [...], "matrix": [[true x pred counts]]}
         }
         self._save(net, keys, sr, info)
 
@@ -260,6 +290,23 @@ class Trainer:
         with self._lock:
             self.state = "stopped"
             self.logs.append("Training stopped — nothing saved.")
+
+    def _log_confusion(self, keys: list[str], y_true: torch.Tensor, y_pred: torch.Tensor) -> dict:
+        """Logs a true-key x predicted-key count table for the final validation set.
+
+        Distinguishes "genuinely random across all keys" from "biased toward one key" or
+        "only two specific keys get swapped" — the aggregate val_acc number can't tell those apart.
+        """
+        n = len(keys)
+        cm = torch.zeros((n, n), dtype=torch.long)
+        for t, p_ in zip(y_true.tolist(), y_pred.tolist()):
+            cm[t, p_] += 1
+        width = max(3, max(len(k) for k in keys))
+        header = "true\\pred".rjust(9) + "".join(k.rjust(width + 1) for k in keys)
+        self._log(header)
+        for i, k in enumerate(keys):
+            self._log(k.rjust(9) + "".join(str(int(cm[i, j])).rjust(width + 1) for j in range(n)))
+        return {"keys": keys, "matrix": cm.tolist()}
 
     def _save(self, net: KeystrokeCNN, keys: list[str], sr: int, info: dict) -> None:
         ckpt = {"format": CHECKPOINT_FORMAT, "state_dict": net.state_dict(), "keys": keys, "sr": sr, "info": info}

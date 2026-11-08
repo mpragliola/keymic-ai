@@ -170,9 +170,31 @@ Dense           N classes, Softmax
 | Epochs | 60 (adjustable in the Train tab) |
 | Batch size | 32 |
 | Validation split | 20 % per key (stratified) |
+| Weight decay | 1e-4 (Adam L2 penalty) |
 
 Minimum to start: **8 samples per key**, **2 distinct keys**.
 Maximum stored per key: 50 (oldest dropped on overflow).
+
+**Training-time augmentation.** Each batch's raw clips are perturbed fresh before the
+spectrogram is computed — a different random perturbation every epoch:
+
+| Augmentation | Range |
+|---|---|
+| Gain | ×0.85–1.15 |
+| Added noise | up to 6 % of the clip's own RMS |
+| Time shift | ± 6 ms, zero-padded |
+
+The validation set is never augmented, so `val_acc` reflects the model's accuracy on
+clean, unperturbed audio. Without this, a small per-key sample count and subtle
+inter-key acoustic differences let the network memorise incidental details of one
+recording session (exact noise floor, exact timing) instead of the keystroke's actual
+acoustic signature — it looks fine on a validation split of that same session and then
+performs at chance on new keystrokes.
+
+A true-key × predicted-key confusion matrix over the final validation set is logged at
+the end of training (and returned from `/model` as `info.confusion`), since the
+aggregate `val_acc` number can't distinguish "genuinely random across all keys" from
+"biased toward one key" or "two specific keys keep getting swapped."
 
 ### 2.4  Persistence (backend)
 

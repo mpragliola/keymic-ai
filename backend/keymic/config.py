@@ -12,6 +12,14 @@ MAX_SAMPLES = 50    # per key; oldest samples are dropped beyond this
 MIN_SAMPLES = 8     # a key needs this many samples to be included in training
 MIN_KEYS    = 2     # training needs at least this many eligible keys
 
+# Training-time augmentation (raw audio, applied fresh each batch so the net
+# can't memorize a session's exact noise floor / timing / loudness instead of
+# the keystroke's actual acoustic signature). Validation is never augmented.
+AUG_NOISE_MAX  = 0.06   # added noise, as a fraction of the clip's RMS, drawn uniformly up to this
+AUG_GAIN_RANGE = (0.85, 1.15)   # random amplitude scale
+AUG_SHIFT_MS   = 6      # random zero-padded time shift, ± this many ms
+WEIGHT_DECAY   = 1e-4   # Adam L2 penalty
+
 
 @dataclass
 class TrainParams:

@@ -123,26 +123,29 @@ This fixes the CNN input shape.
 Input          [64 × 40 × 1]
 
 Conv Block 1
+  Conv2D        16 filters, 3×3, same padding
+  BatchNorm
+  ReLU
+  MaxPool2D     2×2 → [32 × 20 × 16]
+  Dropout2D     0.1
+
+Conv Block 2
   Conv2D        32 filters, 3×3, same padding
   BatchNorm
   ReLU
-  MaxPool2D     2×2 → [32 × 20 × 32]
+  MaxPool2D     2×2 → [16 × 10 × 32]
+  Dropout2D     0.15
 
-Conv Block 2
+Conv Block 3
   Conv2D        64 filters, 3×3, same padding
   BatchNorm
   ReLU
-  MaxPool2D     2×2 → [16 × 10 × 64]
+  MaxPool2D     2×2 → [8 × 5 × 64]
+  Dropout2D     0.2
 
-Conv Block 3
-  Conv2D        128 filters, 3×3, same padding
-  BatchNorm
-  ReLU
-  MaxPool2D     2×2 → [8 × 5 × 128]
+GlobalAveragePooling2D  → [64]
 
-GlobalAveragePooling2D  → [128]
-
-Dense           128 units, ReLU
+Dense           32 units, ReLU
 Dropout         0.4
 
 Dense           N classes, Softmax
@@ -152,12 +155,14 @@ Dense           N classes, Softmax
 
 | Choice | Reason |
 |--------|--------|
-| Three conv blocks | Enough depth to capture local spectral-temporal patterns without overfitting on small datasets |
+| Three conv blocks, 16→32→64 filters | Deliberately small — a per-user dataset is tens of clips per key, not thousands; a wider net (the original 32→64→128) memorizes the training set instead of generalizing |
 | Batch normalisation | Stabilises training and allows higher learning rates |
+| Dropout2D after every conv block | Drops whole feature maps during training, not individual pixels — regularises the conv stack itself, not just the dense head |
 | GlobalAveragePooling instead of Flatten | Reduces parameter count; more robust to slight temporal misalignment |
-| Dropout 0.4 | Main regulariser — the dataset is typically < 500 samples total |
+| Dropout 0.4 in the head | Additional regulariser on the final dense layer |
 | Softmax output | Multi-class probability vector; argmax gives the predicted key (applied at prediction time; training uses logits with `CrossEntropyLoss`) |
 | BatchNorm momentum 0.1 (PyTorch default) | Running statistics used at inference converge within the few hundred steps a small dataset gives |
+| Training-time augmentation + weight decay + early stopping | See §2.3 — the main defense against overfitting given how little data there is per key |
 
 ### 2.3  Training
 

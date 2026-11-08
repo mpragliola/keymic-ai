@@ -220,7 +220,7 @@ class Trainer:
         loss_fn = nn.CrossEntropyLoss()
         shift_max = int(C.AUG_SHIFT_MS * sr / 1000 + 0.5)
         t0 = time.perf_counter()
-        v_logits = None
+        best_val_loss, best_epoch, best_state, best_v_logits = float("inf"), 0, None, None
 
         for epoch in range(p.epochs):
             net.train()
@@ -251,6 +251,11 @@ class Trainer:
             tr_loss = loss_sum.item() / len(train_idx)
             tr_acc = correct.item() / len(train_idx)
 
+            if v_loss < best_val_loss:
+                best_val_loss, best_epoch = v_loss, epoch + 1
+                best_state = {k: v.detach().clone() for k, v in net.state_dict().items()}
+                best_v_logits = v_logits.detach().clone()
+
             with self._lock:
                 self.epoch = epoch + 1
                 for k, v in (("loss", tr_loss), ("acc", tr_acc), ("val_loss", v_loss), ("val_acc", v_acc)):
@@ -261,14 +266,24 @@ class Trainer:
         if self._stop.is_set():
             return self._finish_stopped()
 
-        confusion = self._log_confusion(keys, y_val, v_logits.argmax(1))
+        # Keep the checkpoint with the lowest validation loss, not whichever epoch training
+        # happened to end on — with this little data the net overfits well before the epoch
+        # budget runs out, and val_loss (continuous) is a steadier signal than val_acc (a few
+        # dozen discrete levels, so it swings by double digits epoch to epoch on its own).
+        net.load_state_dict(best_state)
+        best_val_acc = self.history["val_acc"][best_epoch - 1]
+        self._log(f"Best epoch {best_epoch}/{p.epochs}  val_loss={best_val_loss:.4f}  "
+                  f"val_acc={best_val_acc:.3f}  — restored for saving")
+
+        confusion = self._log_confusion(keys, y_val, best_v_logits.argmax(1))
 
         info = {
             "trained_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
             "epochs": p.epochs,
+            "best_epoch": best_epoch,
             "train_samples": len(train_idx),
             "val_samples": len(val_idx),
-            "val_acc": self.history["val_acc"][-1],
+            "val_acc": best_val_acc,
             "train_seconds": round(time.perf_counter() - t0, 2),
             "device": name,
             "confusion": confusion,   # {"keys": [...], "matrix": [[true x pred counts]]}

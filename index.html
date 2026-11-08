@@ -23,16 +23,21 @@
 <!-- ── Header ─────────────────────────────────────────────────────────────── -->
 <header>
   <h1>🎹 KeyMic</h1>
+  <span id="badge-backend" class="badge">backend…</span>
   <span id="badge-mic"   class="badge">mic off</span>
   <span id="badge-data"  class="badge">no data</span>
   <span id="badge-model" class="badge">no model</span>
 </header>
 
+<div id="backend-banner" class="banner" hidden></div>
+
 <!-- ── Tabs ───────────────────────────────────────────────────────────────── -->
 <div class="tabs">
   <button class="tab-btn active" data-tab="record">📡 Record</button>
+  <button class="tab-btn"        data-tab="samples">🔍 Samples</button>
   <button class="tab-btn"        data-tab="train">🧠 Train</button>
   <button class="tab-btn"        data-tab="predict">🎯 Predict</button>
+  <button class="tab-btn"        data-tab="type">⌨️ Type</button>
 </div>
 
 <!-- ══ Record panel ═══════════════════════════════════════════════════════════ -->
@@ -45,6 +50,30 @@
     </div>
     <canvas id="waveform"></canvas>
     <p id="record-stats">0 keys ready · 0 samples total</p>
+    <p id="capture-stats" style="font-size:12px;color:var(--muted);margin-top:4px">Latency: calibrating…</p>
+    <p id="record-error" style="font-size:12px;color:var(--danger);margin-top:4px"></p>
+  </div>
+
+  <div id="legacy-card" class="card" hidden>
+    <div class="card-title">Samples stored in this browser</div>
+    <p id="legacy-text" style="font-size:12px;color:var(--muted);margin-bottom:10px"></p>
+    <div class="btn-row">
+      <button id="btn-legacy-upload" class="btn-primary">Upload to backend</button>
+      <button id="btn-legacy-discard" class="btn-ghost">Discard</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-title">Last press — energy around the key event (ms)</div>
+    <canvas id="capture-view" style="width:100%;height:110px;display:block;background:var(--bg);border-radius:4px"></canvas>
+    <p style="font-size:12px;color:var(--muted);margin-top:8px">
+      Shaded: search window · grey: key event · dashed: threshold · green/red: click kept/ignored
+    </p>
+    <label style="display:flex;gap:10px;align-items:center;font-size:12px;color:var(--muted);margin-top:8px">
+      Click threshold
+      <input id="threshold" type="range" min="2" max="20" step="1" style="flex:1">
+      <span id="threshold-val" style="font-family:var(--mono);width:44px"></span>
+    </label>
   </div>
 
   <div class="card">
@@ -58,11 +87,29 @@
       <button id="btn-clear" class="btn-danger">Delete samples</button>
     </div>
     <p style="margin-top:10px;color:var(--muted);font-size:12px">
-      Samples persist in IndexedDB across reloads. The model is kept separately.<br>
+      Samples are stored by the backend (<code>backend/data</code>). The newest 50 per key are kept.<br>
       Green keys have ≥ 8 samples. Yellow keys need more.
     </p>
   </div>
 
+</div>
+
+<!-- ══ Samples panel ════════════════════════════════════════════════════════ -->
+<div id="tab-samples" class="tab-panel">
+  <div class="card">
+    <div class="card-title">Recorded samples — newest first</div>
+    <div class="btn-row" style="align-items:center">
+      <select id="samples-key" class="samples-select"></select>
+      <button id="samples-prev" class="btn-ghost">← Prev</button>
+      <span id="samples-page" style="color:var(--muted);font-size:12px"></span>
+      <button id="samples-next" class="btn-ghost">Next →</button>
+    </div>
+    <p style="margin-top:10px;color:var(--muted);font-size:12px">
+      Waveform (scaled to each clip's peak; orange line = where the click should start) and the
+      log-mel spectrogram the model sees. A good sample has its click at the orange line.
+    </p>
+  </div>
+  <div id="samples-grid" class="samples-grid"></div>
 </div>
 
 <!-- ══ Train panel ════════════════════════════════════════════════════════════ -->
@@ -70,20 +117,24 @@
 
   <div class="card">
     <div class="card-title">Train CNN on recorded data</div>
-    <div class="btn-row">
+    <div class="btn-row" style="align-items:center">
+      <label style="font-size:12px;color:var(--muted);display:flex;gap:6px;align-items:center">
+        Epochs <input id="train-epochs" type="number" min="1" max="2000" class="num-input">
+      </label>
       <button id="btn-train" class="btn-primary">Start training</button>
       <button id="btn-stop-train" class="btn-ghost" disabled>Stop training</button>
       <button id="btn-delete-model" class="btn-danger" disabled>Delete model</button>
       <button id="btn-delete-samples" class="btn-danger">Delete samples</button>
     </div>
     <p style="margin-top:10px;color:var(--muted);font-size:12px">
-      Requires ≥ 8 samples for each of ≥ 2 keys. Training runs in-browser with TensorFlow.js and
-      saves the model to IndexedDB automatically.
+      Requires ≥ 8 samples for each of ≥ 2 keys. Training runs on the backend's GPU and saves the
+      model there; progress updates live. 20 % of each key's samples are held out for validation.
     </p>
   </div>
 
   <div class="card">
     <div class="card-title">Training log</div>
+    <p id="train-progress" style="font-family:var(--mono);font-size:12px;margin-bottom:8px"></p>
     <pre id="train-log"></pre>
     <canvas id="train-chart"></canvas>
   </div>
@@ -123,8 +174,46 @@
 
 </div>
 
+<!-- ══ Type panel ═════════════════════════════════════════════════════════════ -->
+<div id="tab-type" class="tab-panel">
+
+  <div class="card">
+    <div class="card-title">Type using only the microphone — no keyboard events, just the sound</div>
+    <div class="btn-row" style="margin-bottom:12px">
+      <button id="btn-mic-type" class="btn-primary">Enable mic</button>
+      <button id="btn-type-toggle" class="btn-primary" disabled>Start listening</button>
+      <span id="type-status" style="color:var(--warning);font-size:12px;align-self:center"></span>
+    </div>
+    <textarea id="type-output" rows="6" readonly
+      style="width:100%;font-family:var(--mono);font-size:16px;background:var(--bg);color:var(--text);
+             border:1px solid var(--border);border-radius:4px;padding:10px;resize:vertical"
+      placeholder="Detected keystrokes appear here as you type on the physical keyboard — microphone only, no keyboard input is read."></textarea>
+    <div class="btn-row" style="margin-top:12px">
+      <button id="btn-type-clear" class="btn-ghost">Clear</button>
+    </div>
+    <p style="margin-top:10px;color:var(--muted);font-size:12px">
+      Every click loud enough to cross the Record tab's threshold is classified and appended,
+      whether or not it was an actual tracked key — so background noise above the threshold
+      shows up too. Keys the model wasn't trained on can't be produced; unrecognized sounds are
+      still guessed as the closest trained key.
+    </p>
+  </div>
+
+  <div class="card">
+    <div class="card-title">Last detected click</div>
+    <div class="pred-main">
+      <div class="pred-big">
+        <span class="pred-label">Key</span>
+        <span id="type-last-key" class="pred-char">—</span>
+      </div>
+      <div id="type-conf-bars" class="conf-bars"></div>
+    </div>
+  </div>
+
+</div>
+
 <!-- App entry point (ES module) -->
-<script type="module" src="src/app.js?v=9"></script>
+<script type="module" src="src/app.js?v=15"></script>
 
 </body>
 </html>

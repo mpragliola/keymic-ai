@@ -1,11 +1,9 @@
 # KeyMic backend
 
 Python server that stores keystroke recordings, trains the keystroke CNN on
-your NVIDIA GPU (PyTorch + CUDA), and serves predictions. Same features and
-architecture as the in-browser version (see `../ARCHITECTURE.md`); only the
-compute moves to the GPU.
+your NVIDIA GPU (PyTorch + CUDA), and serves predictions (see `../ARCHITECTURE.md`).
 
-> The frontend doesn't talk to this yet — that wiring is the next step.
+The browser frontend (repo root) uses this API for everything except audio capture.
 
 ## Setup (Windows, NVIDIA GPU)
 
@@ -48,6 +46,8 @@ bytes of a browser `Float32Array`), with the sample rate as `?sr=`. Each clip is
 | `GET`    | `/health`                  |                                                | device, GPU name, torch/CUDA versions |
 | `GET`    | `/samples`                 |                                                | `{sr, sample_length, counts}` |
 | `POST`   | `/samples/{key}?sr=`       | one clip, or N clips concatenated              | `{key, count}` — keeps the newest 50 per key |
+| `GET`    | `/samples/{key}`           |                                                | that key's clips as raw float32, oldest → newest; headers `X-Sample-Rate`, `X-Clip-Length`, `X-Count` (empty body if none) |
+| `DELETE` | `/samples/{key}/{index}`   |                                                | deletes one clip (0 = oldest) → `{key, count}`; `404` if out of range |
 | `DELETE` | `/samples/{key}`           |                                                | deletes one key's samples |
 | `DELETE` | `/samples`                 |                                                | deletes all samples |
 | `POST`   | `/train`                   | optional JSON `{epochs, batch_size, lr, val_split}` | `202`, starts a background run |

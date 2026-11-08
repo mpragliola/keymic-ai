@@ -1,4 +1,4 @@
-import { CFG } from './config.js?v=9';
+import { CFG } from './config.js?v=15';
 
 // Lazy singleton — rebuilt only when the sample rate changes.
 let _fb = null;
@@ -10,12 +10,12 @@ export function getFilterbank(sr) {
   return _fb.tensor;
 }
 
-// [nFftBins × nMels] triangular mel filterbank matrix.
-export function buildFilterbank(nMels, fftLen, sr) {
+// [nFftBins × nMels] triangular mel filterbank matrix spanning fmin…fmax Hz.
+export function buildFilterbank(nMels, fftLen, sr, fmin = CFG.FMIN_HZ, fmax = CFG.FMAX_HZ) {
   const nBins  = Math.floor(fftLen / 2) + 1;
   const toMel  = hz => 2595 * Math.log10(1 + hz / 700);
   const fromMel = m => 700 * (Math.pow(10, m / 2595) - 1);
-  const melMin = toMel(0), melMax = toMel(sr / 2);
+  const melMin = toMel(fmin), melMax = toMel(Math.min(fmax, sr / 2));
 
   const pts = Array.from({ length: nMels + 2 }, (_, i) =>
     Math.floor((fftLen + 1) * fromMel(melMin + (i * (melMax - melMin)) / (nMels + 1)) / sr)

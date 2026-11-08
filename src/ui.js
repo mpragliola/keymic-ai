@@ -1,4 +1,4 @@
-import { CFG, displayKey } from './config.js?v=9';
+import { CFG, displayKey } from './config.js?v=15';
 
 // ─── Badge helpers ────────────────────────────────────────────────────────────
 export function setBadge(id, text, cls) {
@@ -104,6 +104,43 @@ export function drawWaveform(canvas, data) {
     i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
   }
   ctx.stroke();
+}
+
+// ─── Capture view ────────────────────────────────────────────────────────────
+// Energy envelope around the last key event: search window (shaded), key
+// event (grey line at 0 ms), threshold (dashed), detected click (green if
+// kept, red if ignored).
+export function drawCapture(canvas, cut) {
+  const { ctx, W, H } = fitCanvas(canvas);
+  ctx.clearRect(0, 0, W, H);
+  const pad = { l: 34, r: 8, t: 8, b: 16 };
+  const [r0, r1] = cut.rangeMs, DB_MAX = 40;
+  const x = t => pad.l + (t - r0) / (r1 - r0) * (W - pad.l - pad.r);
+  const y = db => pad.t + (1 - Math.max(0, Math.min(DB_MAX, db)) / DB_MAX) * (H - pad.t - pad.b);
+
+  ctx.fillStyle = 'rgba(91,141,239,.12)';
+  ctx.fillRect(x(cut.window[0]), pad.t, x(cut.window[1]) - x(cut.window[0]), H - pad.t - pad.b);
+
+  ctx.font = '10px sans-serif';
+  ctx.fillStyle = 'rgba(255,255,255,.4)';
+  ctx.textAlign = 'right';
+  for (const db of [0, 20, 40]) ctx.fillText(`${db}dB`, pad.l - 4, y(db) + 3);
+  ctx.textAlign = 'center';
+  for (let t = Math.ceil(r0 / 100) * 100; t <= r1; t += 100) ctx.fillText(`${t}`, x(t), H - 3);
+
+  ctx.strokeStyle = 'rgba(255,255,255,.35)'; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(x(0), pad.t); ctx.lineTo(x(0), H - pad.b); ctx.stroke();
+
+  ctx.setLineDash([4, 3]); ctx.strokeStyle = '#f5a623';
+  ctx.beginPath(); ctx.moveTo(pad.l, y(cut.threshold)); ctx.lineTo(W - pad.r, y(cut.threshold)); ctx.stroke();
+  ctx.setLineDash([]);
+
+  ctx.strokeStyle = '#5b8def'; ctx.lineWidth = 1.2; ctx.beginPath();
+  cut.envDb.forEach((db, i) => { const px = x(r0 + i), py = y(db); i ? ctx.lineTo(px, py) : ctx.moveTo(px, py); });
+  ctx.stroke();
+
+  ctx.strokeStyle = cut.audio ? '#3ecf8e' : '#e05252'; ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.moveTo(x(cut.peakMs), pad.t); ctx.lineTo(x(cut.peakMs), H - pad.b); ctx.stroke();
 }
 
 // ─── Training accuracy chart ─────────────────────────────────────────────────

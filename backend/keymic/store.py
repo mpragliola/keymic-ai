@@ -102,6 +102,28 @@ class SampleStore:
             os.replace(tmp, p)
             return int(combined.shape[0])
 
+    def delete_sample(self, key: str, index: int) -> int:
+        """Removes clip `index` (0 = oldest) of `key`. Returns the remaining count.
+
+        Raises IndexError when the index is out of range. Deleting the last clip
+        removes the key's file (and resets the sample rate if the store is empty).
+        """
+        with self._lock:
+            clips = self.load(key)
+            if not 0 <= index < len(clips):
+                raise IndexError(f"{key!r} has {len(clips)} samples, no index {index}")
+            remaining = np.delete(clips, index, axis=0)
+            p = self._path(key)
+            if len(remaining) == 0:
+                p.unlink()
+                self._reset_sr_if_empty()
+                return 0
+            tmp = p.with_suffix(".tmp")
+            with open(tmp, "wb") as f:   # same atomic replace as add()
+                np.save(f, remaining)
+            os.replace(tmp, p)
+            return int(len(remaining))
+
     def delete(self, key: str) -> bool:
         with self._lock:
             p = self._path(key)

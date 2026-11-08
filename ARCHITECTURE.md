@@ -2,14 +2,27 @@
 
 ## Overview
 
-KeyMic trains a Convolutional Neural Network (CNN) entirely in the browser
-to classify keyboard keys from their acoustic fingerprint.  No data ever
-leaves the machine; everything — capture, feature extraction, training, and
-inference — runs client-side with the Web Audio API and TensorFlow.js.
+KeyMic trains a Convolutional Neural Network (CNN) to classify keyboard keys
+from their acoustic fingerprint. Two local processes, nothing leaves the machine:
+
+| Part | Does |
+|------|------|
+| Browser (`index.html`, `src/`) | microphone capture, cutting each keystroke clip at its click (§1.1), sample browser, training progress UI, prediction UI |
+| Backend (`backend/`, PyTorch) | sample storage, spectrograms (§1.2–1.6), CNN training on the GPU (§2), prediction |
+
+```
+keydown ─► browser: cut 200 ms clip at the click ─► POST /samples/{key}   (record)
+                                                 └► POST /predict          (predict → key + probabilities)
+Train tab ─► POST /train ─► poll GET /train/status every 400 ms (log lines, per-epoch loss/acc) ─► GET /model
+```
+
+The browser still computes spectrograms with TensorFlow.js, only to draw the
+previews in the Samples tab; the JS and Python versions produce the same
+features (identical filterbank, same normalisation).
 
 ---
 
-## 1  Front-end: Mel Spectrogram
+## 1  Feature pipeline: keystroke clip → log-mel spectrogram
 
 Raw audio → 2-D image that the CNN can learn from.
 
@@ -20,7 +33,31 @@ Raw audio → 2-D image that the CNN can learn from.
 | API | `navigator.mediaDevices.getUserMedia` |
 | Processing flags | `echoCancellation: false`, `noiseSuppression: false`, `autoGainControl: false` — raw signal only |
 | Ring buffer | `Float32Array`, depth 4 s, written by a `ScriptProcessorNode` (chosen over `AudioWorklet` to avoid the HTTPS requirement) |
-| Snapshot | `extract(delayMs, durationMs)` reads 200 ms of audio ending at the desired past moment |
+| Keystroke cut | see §1.1.1 |
+
+#### 1.1.1  Cutting the keystroke clip
+
+Audio reaches the ring buffer later than the key event (processing chunk of
+2048 frames + device input latency), so the clip can't simply be "the last
+200 ms" at keydown — that window would end before the click arrives.
+`AudioCapture.captureKeystroke` instead:
+
+1. maps the event's `timeStamp` to an absolute stream frame (frames written so
+   far + time since the last chunk);
+2. waits until the audio after the event has arrived;
+3. high-passes −250…+400 ms of audio around the event (4th-order
+   Butterworth, 800 Hz) so fans, hum and rumble don't mask the click, and
+   computes a short-time energy envelope (5 ms windows, 1 ms hop) in dB above
+   the background (20th percentile of the envelope);
+4. takes the envelope peak inside the search window as the click. Before
+   calibration the window is −100…+300 ms; once 5 clicks were accepted it
+   narrows to ±80 ms around the **measured latency** (median event→click
+   offset of the last 20 clicks). If the narrow window finds nothing, the wide
+   one is searched too, so a wrong calibration corrects itself;
+   the press is rejected if the peak is below the threshold (default 6 dB,
+   adjustable on the Record tab, which also plots the envelope of the last press);
+5. returns 200 ms starting 20 ms before the peak, so every clip has its click
+   at the same position.
 
 ### 1.2  STFT
 
@@ -31,12 +68,17 @@ Each 200 ms window is framed with:
 | Frame length | 512 samples | ≈ 11 ms at 44 100 Hz — shorter than a keystroke |
 | Hop length | 128 samples | 75 % overlap for temporal smoothness |
 | Window function | Hann | Reduces spectral leakage at frame boundaries |
-| Transform | Real FFT (`tf.spectral.rfft`) | Complex spectrum; power = `re² + im²` |
+| Transform | Real FFT (`torch.fft.rfft`; `tf.spectral.rfft` for browser previews) | Complex spectrum; power = `re² + im²` |
 
 ### 1.3  Mel filterbank
 
 The power spectrum (257 bins) is projected onto **40 triangular mel-scale
-filters** (`buildFilterbank`) represented as a `[257 × 40]` matrix.
+filters spanning 300 Hz – 16 kHz** (`buildFilterbank`) represented as a
+`[257 × 40]` matrix. Below 300 Hz is rumble and mains hum; above 16 kHz is
+mostly microphone hiss. Restricting the range keeps that noise out of the
+features and out of the per-spectrogram normalisation. Stored clips are
+unfiltered, so the range can change without re-recording (but requires
+retraining).
 Matrix-multiplication (`tf.matMul`) produces one mel-energy vector per frame.
 
 Mel scale formula:
@@ -73,7 +115,7 @@ This fixes the CNN input shape.
 
 ---
 
-## 2  Back-end: Convolutional Neural Network
+## 2  Convolutional Neural Network (backend, PyTorch)
 
 ### 2.1  Architecture
 
@@ -81,26 +123,29 @@ This fixes the CNN input shape.
 Input          [64 × 40 × 1]
 
 Conv Block 1
+  Conv2D        16 filters, 3×3, same padding
+  BatchNorm
+  ReLU
+  MaxPool2D     2×2 → [32 × 20 × 16]
+  Dropout2D     0.1
+
+Conv Block 2
   Conv2D        32 filters, 3×3, same padding
   BatchNorm
   ReLU
-  MaxPool2D     2×2 → [32 × 20 × 32]
+  MaxPool2D     2×2 → [16 × 10 × 32]
+  Dropout2D     0.15
 
-Conv Block 2
+Conv Block 3
   Conv2D        64 filters, 3×3, same padding
   BatchNorm
   ReLU
-  MaxPool2D     2×2 → [16 × 10 × 64]
+  MaxPool2D     2×2 → [8 × 5 × 64]
+  Dropout2D     0.2
 
-Conv Block 3
-  Conv2D        128 filters, 3×3, same padding
-  BatchNorm
-  ReLU
-  MaxPool2D     2×2 → [8 × 5 × 128]
+GlobalAveragePooling2D  → [64]
 
-GlobalAveragePooling2D  → [128]
-
-Dense           128 units, ReLU
+Dense           32 units, ReLU
 Dropout         0.4
 
 Dense           N classes, Softmax
@@ -110,11 +155,14 @@ Dense           N classes, Softmax
 
 | Choice | Reason |
 |--------|--------|
-| Three conv blocks | Enough depth to capture local spectral-temporal patterns without overfitting on small datasets |
+| Three conv blocks, 16→32→64 filters | Deliberately small — a per-user dataset is tens of clips per key, not thousands; a wider net (the original 32→64→128) memorizes the training set instead of generalizing |
 | Batch normalisation | Stabilises training and allows higher learning rates |
+| Dropout2D after every conv block | Drops whole feature maps during training, not individual pixels — regularises the conv stack itself, not just the dense head |
 | GlobalAveragePooling instead of Flatten | Reduces parameter count; more robust to slight temporal misalignment |
-| Dropout 0.4 | Main regulariser — the dataset is typically < 500 samples total |
-| Softmax output | Multi-class probability vector; argmax gives the predicted key |
+| Dropout 0.4 in the head | Additional regulariser on the final dense layer |
+| Softmax output | Multi-class probability vector; argmax gives the predicted key (applied at prediction time; training uses logits with `CrossEntropyLoss`) |
+| BatchNorm momentum 0.1 (PyTorch default) | Running statistics used at inference converge within the few hundred steps a small dataset gives |
+| Training-time augmentation + weight decay + early stopping | See §2.3 — the main defense against overfitting given how little data there is per key |
 
 ### 2.3  Training
 
@@ -122,49 +170,55 @@ Dense           N classes, Softmax
 |----------------|-------|
 | Optimiser | Adam |
 | Learning rate | 0.001 |
-| Loss | `sparseCategoricalCrossentropy` |
+| Loss | `CrossEntropyLoss` |
 | Metric | Accuracy |
-| Epochs | 60 |
+| Epochs | 60 (adjustable in the Train tab) |
 | Batch size | 32 |
 | Validation split | 20 % per key (stratified) |
+| Weight decay | 1e-4 (Adam L2 penalty) |
 
 Minimum to start: **8 samples per key**, **2 distinct keys**.
 Maximum stored per key: 50 (oldest dropped on overflow).
 
-### 2.4  Persistence
+**Training-time augmentation.** Each batch's raw clips are perturbed fresh before the
+spectrogram is computed — a different random perturbation every epoch:
+
+| Augmentation | Range |
+|---|---|
+| Gain | ×0.85–1.15 |
+| Added noise | up to 6 % of the clip's own RMS |
+| Time shift | ± 6 ms, zero-padded |
+
+The validation set is never augmented, so `val_acc` reflects the model's accuracy on
+clean, unperturbed audio. Without this, a small per-key sample count and subtle
+inter-key acoustic differences let the network memorise incidental details of one
+recording session (exact noise floor, exact timing) instead of the keystroke's actual
+acoustic signature — it looks fine on a validation split of that same session and then
+performs at chance on new keystrokes.
+
+A true-key × predicted-key confusion matrix over the final validation set is logged at
+the end of training (and returned from `/model` as `info.confusion`), since the
+aggregate `val_acc` number can't distinguish "genuinely random across all keys" from
+"biased toward one key" or "two specific keys keep getting swapped."
+
+### 2.4  Persistence (backend)
 
 | Artefact | Storage |
 |----------|---------|
-| Raw audio samples | IndexedDB via `localForage` (`ks-{key}` keys, ArrayBuffer) |
-| Sample counts | IndexedDB (`ks-counts`, JSON) |
-| Sample rate | IndexedDB (`ks-sr`) |
-| Trained model weights | IndexedDB via `model.save('indexeddb://keystroke-cnn')` |
-| Model key list | IndexedDB (`ks-model-keys`, JSON) |
+| Raw audio clips | `backend/data/samples/key_<hex>.npy` — float32 `[n, clip_length]` per key |
+| Sample rate | `backend/data/meta.json` |
+| Trained model | `backend/data/model.pt` — weights, key list, sample rate, metrics |
 
-Both samples and model survive page reloads and browser restarts.
+Training runs in a background thread on the GPU (spectrograms of the whole
+dataset in one batched pass). The API exposes start / stop / status / delete;
+a stopped run saves nothing. Endpoints and setup: `backend/README.md`.
 
----
-
-## 3  Python backend (GPU training)
-
-`backend/` re-implements the same pipeline in PyTorch so training runs on CUDA
-instead of WebGL. Spectrogram construction mirrors §1 (the mel filterbank is
-bit-identical to the JS one) and `KeystrokeCNN` mirrors the layer stack in §2.
-Differences:
-
-| Aspect | Browser (TF.js) | Backend (PyTorch) |
-|--------|-----------------|-------------------|
-| Spectrograms | per clip, during dataset build | whole dataset in one batched GPU pass |
-| Output layer | softmax inside the model | logits; `CrossEntropyLoss` / softmax at prediction |
-| Validation | stratified 20 % per key | same |
-| Storage | IndexedDB | `backend/data/samples/*.npy` + `model.pt` |
-
-Training runs in a background thread; the HTTP API exposes start / stop /
-status / delete. Endpoints and setup: `backend/README.md`.
+Samples recorded in the browser before the backend existed (IndexedDB) are
+offered for one-click upload on the Record tab (`src/legacy-store.js`).
 
 ---
 
-## 4  File structure
+## 3  File structure
 
 ```
 F:/dev/keymic/
@@ -173,11 +227,12 @@ F:/dev/keymic/
 │   └── main.css          Dark-theme stylesheet
 ├── src/
 │   ├── config.js         Shared constants and keyboard layout
-│   ├── audio.js          AudioCapture — ring buffer, mic init, snapshot
-│   ├── features.js       Mel filterbank (singleton) + computeMelSpec
-│   ├── store.js          IndexedDB persistence layer (localForage wrapper)
-│   ├── model.js          buildModel · trainFromStore · loadSavedModel · deleteSavedModel
-│   ├── ui.js             All DOM helpers (badges, keyboard, charts, etc.)
+│   ├── audio.js          AudioCapture — ring buffer, click detection, latency calibration
+│   ├── api.js            Backend client (samples, training, model, predict)
+│   ├── features.js       Mel spectrogram in TF.js (Samples tab previews)
+│   ├── legacy-store.js   One-time upload of samples kept in IndexedDB by older versions
+│   ├── ui.js             All DOM helpers (badges, keyboard, charts, capture view)
+│   ├── samples.js        Samples tab: paginated clip browser (waveform, spectrogram, play, delete)
 │   └── app.js            Application orchestrator — state, event handlers
 ├── backend/              Python GPU backend (see backend/README.md)
 └── ARCHITECTURE.md       This document
@@ -185,13 +240,7 @@ F:/dev/keymic/
 
 ---
 
-## 5  Running locally
+## 4  Running locally
 
-```bash
-cd F:/dev/keymic
-python -m http.server 8080
-# then open  http://localhost:8080
-```
-
-A local HTTP server is required for ES module imports and `getUserMedia`.
-Opening `index.html` directly as a `file://` URL will block both.
+See the root `README.md`: start the backend (`python run.py` in `backend/`),
+then serve the frontend (`python -m http.server 8080`) and open http://localhost:8080.

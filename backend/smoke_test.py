@@ -60,11 +60,32 @@ with TestClient(app) as c:
         check(r.status_code == 200 and r.json()["count"] == 12, f"bulk upload {k!r}")
     r = c.post("/samples/a", params={"sr": SR}, content=clip(FREQS["a"]).tobytes())
     check(r.json()["count"] == 13, "single-clip upload appends")
-    check(c.post("/samples/a", params={"sr": 44100}, content=clip(300).tobytes()).status_code == 409,
+    wrong_rate_clip = np.zeros(C.sample_length(44100), dtype="<f4")   # correctly shaped for 44100 Hz, not 48000
+    check(c.post("/samples/a", params={"sr": 44100}, content=wrong_rate_clip.tobytes()).status_code == 409,
           "mismatched sample rate rejected")
     check(c.post("/samples/a", params={"sr": SR}, content=b"\0" * 12).status_code == 400,
           "wrong clip length rejected")
     check(c.get("/samples").json()["counts"] == {"a": 13, "d": 12, "s": 12}, "counts")
+
+    # Download: raw float32, oldest → newest, with metadata headers
+    r = c.get("/samples/d")
+    n, clip_len = int(r.headers["x-count"]), int(r.headers["x-clip-length"])
+    check(r.status_code == 200 and n == 12 and clip_len == L and int(r.headers["x-sample-rate"]) == SR,
+          "download headers")
+    check(len(r.content) == n * clip_len * 4, "download body length = count × clip length × 4")
+    from keymic.api import store as _store
+    check(np.array_equal(np.frombuffer(r.content, "<f4").reshape(n, clip_len), _store.load("d")),
+          "download bytes round-trip")
+    r = c.get("/samples/q")
+    check(r.status_code == 200 and r.headers["x-count"] == "0" and r.content == b"", "unknown key → empty")
+
+    # Delete one clip by index; the clip after it moves into its place
+    second = _store.load("d")[1].copy()
+    r = c.delete("/samples/d/0")
+    check(r.status_code == 200 and r.json() == {"key": "d", "count": 11}, "delete clip by index")
+    check(np.array_equal(_store.load("d")[0], second), "remaining clips keep their order")
+    check(c.delete("/samples/d/99").status_code == 404, "out-of-range index → 404")
+    c.post("/samples/d", params={"sr": SR}, content=clip(FREQS["d"]).tobytes())   # back to 12 for training
 
     # Full training run
     r = c.post("/train", json={"epochs": 30})

@@ -1,14 +1,24 @@
 """Constants shared with the browser frontend (src/config.js) — keep both in sync."""
 from dataclasses import dataclass
 
-CAPTURE_MS  = 200   # audio window per keystroke (ms)
+CAPTURE_MS  = 100   # audio window per keystroke (ms)
 N_MELS      = 40    # mel filterbank bands
-FRAME_LEN   = 512   # STFT frame size (samples)
+FMIN_HZ     = 300   # mel filterbank range (Hz): below = rumble/hum, above = mostly mic hiss
+FMAX_HZ     = 22000
+FRAME_LEN   = 2048   # STFT frame size (samples)
 HOP_LEN     = 128   # STFT hop size (samples)
-N_FRAMES    = 64    # fixed time-axis length fed to the CNN
-MAX_SAMPLES = 50    # per key; oldest samples are dropped beyond this
+N_FRAMES    = 128    # fixed time-axis length fed to the CNN
+MAX_SAMPLES = 100    # per key; oldest samples are dropped beyond this
 MIN_SAMPLES = 8     # a key needs this many samples to be included in training
 MIN_KEYS    = 2     # training needs at least this many eligible keys
+
+# Training-time augmentation (raw audio, applied fresh each batch so the net
+# can't memorize a session's exact noise floor / timing / loudness instead of
+# the keystroke's actual acoustic signature). Validation is never augmented.
+AUG_NOISE_MAX  = 0.16   # added noise, as a fraction of the clip's RMS, drawn uniformly up to this
+AUG_GAIN_RANGE = (0.75, 1.25)   # random amplitude scale
+AUG_SHIFT_MS   = 8      # random zero-padded time shift, ± this many ms
+WEIGHT_DECAY   = 1e-4   # Adam L2 penalty
 
 
 @dataclass

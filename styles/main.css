@@ -13,6 +13,7 @@
 }
 
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+[hidden] { display: none !important; }
 
 body {
   background: var(--bg);
@@ -180,6 +181,7 @@ button:disabled { opacity: .4; cursor: default; }
 .kb-key.has-data  { border-color: var(--success); background: rgba(62,207,142,.07); }
 .kb-key.partial   { border-color: var(--warning); background: rgba(245,166,35,.07); }
 .kb-key.recording { background: rgba(91,141,239,.25) !important; transform: scale(.94); }
+.kb-key.rejected  { background: rgba(224,82,82,.30) !important; border-color: var(--danger) !important; }
 .kb-key.predicting{ background: rgba(62,207,142,.25) !important; transform: scale(.94); }
 
 /* ── Train tab ───────────────────────────────────────────── */
@@ -319,3 +321,32 @@ button:disabled { opacity: .4; cursor: default; }
 .hist-row.correct .hist-pred { color: var(--success); }
 .hist-row.wrong   .hist-pred { color: var(--danger);  }
 .hist-probs  { color: var(--muted); margin-left: auto; font-family: var(--mono); }
+
+/* ── Samples tab ─────────────────────────────────────────── */
+.samples-select {
+  background: var(--bg); color: var(--text); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 6px 10px; font-family: var(--mono);
+}
+.samples-grid {
+  display: grid; gap: 12px;
+  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+}
+.sample-card {
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 10px; display: flex; flex-direction: column; gap: 6px;
+}
+.sample-head { display: flex; justify-content: space-between; font-family: var(--mono); font-size: 11px; color: var(--muted); }
+.sample-wave, .sample-spec { width: 100%; height: 56px; display: block; border-radius: 4px; }
+.sample-card button { padding: 4px 10px; font-size: 12px; }
+
+/* ── Backend banner / inputs ─────────────────────────────── */
+.banner {
+  width: 100%; max-width: 860px; margin-bottom: 16px; padding: 10px 14px;
+  border-radius: var(--radius); font-size: 13px;
+  background: rgba(224,82,82,.12); border: 1px solid var(--danger); color: var(--danger);
+}
+.num-input {
+  width: 70px; background: var(--bg); color: var(--text); border: 1px solid var(--border);
+  border-radius: 6px; padding: 5px 8px; font-family: var(--mono);
+}
+code { font-family: var(--mono); font-size: 11px; }

@@ -34,7 +34,7 @@ export const CFG = {
   N_FRAMES:     64,   // fixed time-axis length fed to the CNN
 
   // Training (backend enforces these; kept here for UI hints)
-  MAX_SAMPLES:  50,
+  MAX_SAMPLES:  1000,
   MIN_SAMPLES:   8,
   MIN_KEYS:      2,
 };

@@ -249,7 +249,7 @@ single-conv version this replaced, still small in absolute terms.
 | Weight decay | 1e-4 (Adam L2 penalty) |
 
 Minimum to start: **8 samples per key**, **2 distinct keys**.
-Maximum stored per key: 50 (oldest dropped on overflow).
+Maximum stored per key: 1000 (oldest dropped on overflow).
 
 **Training-time augmentation.** Each batch's raw clips are perturbed fresh before the
 spectrogram is computed — a different random perturbation every epoch:

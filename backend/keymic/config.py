@@ -20,7 +20,7 @@ HOP_LEN     = 128   # STFT hop size (samples)
 # would zero-pad roughly half the input. 32 keeps padding to a frame or two either way,
 # and divides evenly by the three 2x poolings in model.py.
 N_FRAMES    = 32
-MAX_SAMPLES = 50    # per key; oldest samples are dropped beyond this
+MAX_SAMPLES = 1000  # per key; oldest samples are dropped beyond this (~38 MB per key at 48 kHz)
 MIN_SAMPLES = 8     # a key needs this many samples to be included in training
 MIN_KEYS    = 2     # training needs at least this many eligible keys
 

@@ -45,7 +45,7 @@ bytes of a browser `Float32Array`), with the sample rate as `?sr=`. Each clip is
 |----------|----------------------------|------------------------------------------------|--------|
 | `GET`    | `/health`                  |                                                | device, GPU name, torch/CUDA versions |
 | `GET`    | `/samples`                 |                                                | `{sr, sample_length, counts}` |
-| `POST`   | `/samples/{key}?sr=`       | one clip, or N clips concatenated              | `{key, count}` — keeps the newest 50 per key |
+| `POST`   | `/samples/{key}?sr=`       | one clip, or N clips concatenated              | `{key, count}` — keeps the newest 1000 per key |
 | `GET`    | `/samples/{key}`           |                                                | that key's clips as raw float32, oldest → newest; headers `X-Sample-Rate`, `X-Clip-Length`, `X-Count` (empty body if none) |
 | `DELETE` | `/samples/{key}/{index}`   |                                                | deletes one clip (0 = oldest) → `{key, count}`; `404` if out of range |
 | `DELETE` | `/samples/{key}`           |                                                | deletes one key's samples |

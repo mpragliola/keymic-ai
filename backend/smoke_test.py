@@ -60,7 +60,8 @@ with TestClient(app) as c:
         check(r.status_code == 200 and r.json()["count"] == 12, f"bulk upload {k!r}")
     r = c.post("/samples/a", params={"sr": SR}, content=clip(FREQS["a"]).tobytes())
     check(r.json()["count"] == 13, "single-clip upload appends")
-    check(c.post("/samples/a", params={"sr": 44100}, content=clip(300).tobytes()).status_code == 409,
+    wrong_rate_clip = np.zeros(C.sample_length(44100), dtype="<f4")   # correctly shaped for 44100 Hz, not 48000
+    check(c.post("/samples/a", params={"sr": 44100}, content=wrong_rate_clip.tobytes()).status_code == 409,
           "mismatched sample rate rejected")
     check(c.post("/samples/a", params={"sr": SR}, content=b"\0" * 12).status_code == 400,
           "wrong clip length rejected")

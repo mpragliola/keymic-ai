@@ -46,8 +46,10 @@
   <div class="card-row">
     <div class="card">
       <div class="card-title">Microphone</div>
-      <button id="btn-mic" class="btn-primary">Enable mic</button>
-      <canvas id="waveform"></canvas>
+      <div class="mic-row">
+        <button id="btn-mic" class="btn-primary">Enable mic</button>
+        <canvas id="waveform"></canvas>
+      </div>
       <p id="record-stats">0 keys ready · 0 samples total</p>
       <p id="capture-stats" class="small-note"></p>
       <p id="record-error" class="small-note" style="color:var(--danger)"></p>
@@ -213,7 +215,7 @@
 </div>
 
 <!-- App entry point (ES module) -->
-<script type="module" src="src/app.js?v=17"></script>
+<script type="module" src="src/app.js?v=18"></script>
 
 </body>
 </html>

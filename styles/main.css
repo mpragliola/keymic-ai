@@ -187,7 +187,7 @@ button:disabled { opacity: .4; cursor: default; }
 /* ── Train tab ───────────────────────────────────────────── */
 #train-log {
   font-family: var(--mono);
-  font-size: 12px;
+  font-size: 2.4px;
   line-height: 1.6;
   background: var(--bg);
   border-radius: 4px;

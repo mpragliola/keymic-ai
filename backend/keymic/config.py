@@ -1,7 +1,15 @@
 """Constants shared with the browser frontend (src/config.js) — keep both in sync."""
 from dataclasses import dataclass
 
-CAPTURE_MS  = 200   # audio window per keystroke (ms)
+CAPTURE_MS  = 200   # audio window stored per keystroke (ms)
+FEATURE_MS  = 100   # only this much of each stored clip feeds the model — a key's release
+                    # (timing varies with how long it's held, and can blur into the next
+                    # key's press during fast typing) is excluded; only the press is used
+PRE_ONSET_MS = 20   # the feature window starts this long before the detected click
+ONSET_SEARCH_MS = 100   # onset re-detection (onset.py) looks for the click within this
+                        # much of the stored clip, biased toward the earliest crossing so a
+                        # later, louder release doesn't get mistaken for the press
+ONSET_THRESHOLD_DB = 6  # click = first point this many dB above the clip's own background
 N_MELS      = 40    # mel filterbank bands
 FMIN_HZ     = 300   # mel filterbank range (Hz): below = rumble/hum, above = mostly mic hiss
 FMAX_HZ     = 16000
@@ -30,5 +38,10 @@ class TrainParams:
 
 
 def sample_length(sr: int) -> int:
-    """Samples per keystroke clip. Rounds half up, matching Math.round in the frontend."""
+    """Samples per stored keystroke clip. Rounds half up, matching Math.round in the frontend."""
     return int(CAPTURE_MS * sr / 1000 + 0.5)
+
+
+def feature_length(sr: int) -> int:
+    """Samples actually fed to the model — a leading crop of the stored clip."""
+    return int(FEATURE_MS * sr / 1000 + 0.5)

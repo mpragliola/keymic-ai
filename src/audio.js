@@ -146,6 +146,14 @@ export class AudioCapture {
       peak = findPeak(window);
     }
 
+    // The 5 ms *window* with the most energy scores highest once it fully contains the
+    // click's decay tail — its start lands a few ms after the actual onset. Refine to the
+    // loudest single sample in and just past that window, which tracks the true click.
+    if (peak.db > -Infinity) {
+      const from = ms(peak.ms - r0), to = from + ms(5) + ms(4);
+      peak = { ms: r0 + peakAmplitudeFrame(region, from, to) * 1000 / this.sr, db: peak.db };
+    }
+
     const diag = { envDb, rangeMs: [r0, r1], window, peakMs: peak.ms, peakDb: peak.db,
                    threshold: this.minPeakDb, latencyMs: lat };
     if (peak.db < this.minPeakDb) return { audio: null, ...diag };
@@ -192,7 +200,7 @@ export class AudioCapture {
       // estimate, high-passed so fans/hum don't mask the click.
       const region = highpass(this.readAbsolute(target - bgWin - warm, bgWin + warm),
                               this.sr, CFG.DETECT_HIGHPASS_HZ).subarray(warm);
-      const { envDb, background } = energyEnvelopeDb(region, win, envHop);
+      const { envDb } = energyEnvelopeDb(region, win, envHop);
 
       // envDb[i] covers frame (target - bgWin + i*envHop); only the newest `hop`
       // worth is unscanned since the previous iteration.
@@ -205,21 +213,19 @@ export class AudioCapture {
 
       if (peakI >= 0) {
         // The true peak can land a little after the first crossing (the click's rise
-        // time); refine over a short window ahead once that audio has arrived.
-        let bestFrame = target - bgWin + peakI * envHop, bestDb = peakDb;
+        // time, or the energy window scoring highest once it contains the decay tail);
+        // refine to the loudest sample over a short window ahead once it has arrived.
+        let bestFrame = target - bgWin + peakI * envHop;
         await this.waitUntil(bestFrame + peakSearch);
         if (this._blindStop) break;
         const extra = highpass(this.readAbsolute(bestFrame - warm, peakSearch + warm),
                                this.sr, CFG.DETECT_HIGHPASS_HZ).subarray(warm);
-        const { envDb: extraDb } = energyEnvelopeDb(extra, win, envHop, background);
-        for (let i = 0; i < extraDb.length; i++) {
-          if (extraDb[i] > bestDb) { bestDb = extraDb[i]; bestFrame = bestFrame + i * envHop; }
-        }
+        bestFrame += peakAmplitudeFrame(extra, 0, extra.length);
 
         cooldownUntil = bestFrame + refractory;
         await this.waitUntil(bestFrame + clip - pre);
         if (this._blindStop) break;
-        onClick({ audio: this.readAbsolute(bestFrame - pre, clip), peakDb: bestDb, threshold: this.minPeakDb });
+        onClick({ audio: this.readAbsolute(bestFrame - pre, clip), peakDb, threshold: this.minPeakDb });
       }
 
       scanned = target;
@@ -249,6 +255,15 @@ function energyEnvelopeDb(region, win, hop, background) {
   }
   const envDb = Float32Array.from(env, e => 10 * Math.log10((e + 1e-12) / background));
   return { envDb, background };
+}
+
+// Index of the largest-amplitude sample in region[from, to) (clamped to bounds).
+// An energy window's start only approximates the click; this pinpoints it.
+function peakAmplitudeFrame(region, from, to) {
+  from = Math.max(0, from); to = Math.min(region.length, to);
+  let bi = from, bv = -Infinity;
+  for (let k = from; k < to; k++) { const v = Math.abs(region[k]); if (v > bv) { bv = v; bi = k; } }
+  return bi;
 }
 
 // 4th-order Butterworth high-pass: two cascaded RBJ biquads (Q = 1/√2 each).

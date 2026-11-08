@@ -15,6 +15,7 @@ import torch
 import torch.nn as nn
 
 from . import config as C
+from . import onset
 from .features import MelSpectrogram
 from .model import KeystrokeCNN
 from .store import SampleStore, SampleRateMismatch, StoreError
@@ -139,7 +140,11 @@ class Trainer:
         if audio.shape != (L,):
             raise StoreError(f"expected one clip of {L} samples, got {audio.shape[0]}")
 
-        x = m.mel(torch.from_numpy(audio).to(self.device).unsqueeze(0))
+        # Same re-detection and crop as training (onset.recenter) — must match, or the
+        # model sees a differently-aligned window at inference than it was trained on.
+        feat_len = C.feature_length(sr)
+        recentered = onset.recenter(audio[np.newaxis], sr, feat_len)[0]
+        x = m.mel(torch.from_numpy(recentered).to(self.device).unsqueeze(0))
         with torch.no_grad():
             probs = torch.softmax(m.net(x), dim=1)[0].cpu().numpy()
         order = np.argsort(-probs)
@@ -194,8 +199,17 @@ class Trainer:
         labels_np = np.asarray(labels)
 
         mel = MelSpectrogram(sr, dev)
-        audio = torch.from_numpy(np.concatenate(clips)).to(dev)   # [N, L] raw clips, kept for per-epoch augmentation
         y = torch.from_numpy(labels_np).to(dev)
+
+        # Re-detect each clip's click from the stored audio itself (onset.recenter) rather
+        # than trusting where the browser's capture-time cut placed it — this corrects
+        # already-recorded, imperfectly-centered samples with no need to re-record them.
+        # The working window is wider than FEATURE_MS by `margin` on each side, so training
+        # augmentation (_augment's time-shift) still has room to shift within real audio.
+        feat_len = C.feature_length(sr)
+        margin = int(C.AUG_SHIFT_MS * sr / 1000 + 0.5)
+        recentered = onset.recenter(np.concatenate(clips), sr, feat_len + 2 * margin)
+        audio = torch.from_numpy(recentered).to(dev)   # [N, feat_len + 2*margin], click-aligned
 
         # Stratified split: VAL_SPLIT of every key goes to validation, so each
         # key appears in both sets.
@@ -211,14 +225,15 @@ class Trainer:
         val_idx = torch.tensor(val_idx, device=dev)
         self._log(f"Total {len(labels)} samples ({len(train_idx)} train / {len(val_idx)} validation)")
 
-        # Validation spectrograms are fixed (never augmented) so val_acc tracks real generalization
-        x_val = torch.cat([mel(audio[val_idx[i:i + 512]]) for i in range(0, len(val_idx), 512)])
+        # The centered feat_len window, dropping the ± margin kept only for augmentation.
+        # Validation is never augmented, so val_acc tracks real generalization.
+        x_val = torch.cat([mel(audio[val_idx[i:i + 512], margin:margin + feat_len])
+                           for i in range(0, len(val_idx), 512)])
         y_val = y[val_idx]
 
         net = KeystrokeCNN(len(keys)).to(dev)
         opt = torch.optim.Adam(net.parameters(), lr=p.lr, weight_decay=C.WEIGHT_DECAY)
         loss_fn = nn.CrossEntropyLoss()
-        shift_max = int(C.AUG_SHIFT_MS * sr / 1000 + 0.5)
         t0 = time.perf_counter()
         best_val_loss, best_epoch, best_state, best_v_logits = float("inf"), 0, None, None
 
@@ -231,7 +246,9 @@ class Trainer:
                 if self._stop.is_set():
                     break
                 idx = perm[b:b + p.batch_size]
-                batch_x = mel(_augment(audio[idx], shift_max))
+                # Shift within the ± margin of real audio kept around the feat_len window,
+                # then take the centered crop — same convention as x_val, just perturbed.
+                batch_x = mel(_augment(audio[idx], margin)[:, margin:margin + feat_len])
                 logits = net(batch_x)
                 loss = loss_fn(logits, y[idx])
                 opt.zero_grad(set_to_none=True)

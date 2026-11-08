@@ -217,10 +217,22 @@ class Trainer:
         # already-recorded, imperfectly-centered samples with no need to re-record them.
         # The working window is wider than FEATURE_MS by `margin` on each side, so training
         # augmentation (_augment's time-shift) still has room to shift within real audio.
+        # Done per key (not one big concatenated call) purely so progress can be logged —
+        # onset.find_click's filtering is a plain Python loop per clip, so this is the one
+        # step in setup slow enough, with enough samples, to be worth reporting on.
         feat_len = C.feature_length(sr)
         margin = int(C.AUG_SHIFT_MS * sr / 1000 + 0.5)
-        recentered = onset.recenter(np.concatenate(clips), sr, feat_len + 2 * margin)
+        out_len = feat_len + 2 * margin
+        self._log(f"Re-detecting click positions in {len(labels)} clips…")
+        t_onset = time.perf_counter()
+        recentered_parts, done = [], 0
+        for k, a in zip(keys, clips):
+            recentered_parts.append(onset.recenter(a, sr, out_len))
+            done += len(a)
+            self._log(f"  {k!r}: done ({done}/{len(labels)})")
+        recentered = np.concatenate(recentered_parts)
         audio = torch.from_numpy(recentered).to(dev)   # [N, feat_len + 2*margin], click-aligned
+        self._log(f"Onset re-detection done in {time.perf_counter() - t_onset:.1f}s")
 
         # Stratified split: VAL_SPLIT of every key goes to validation, so each
         # key appears in both sets.

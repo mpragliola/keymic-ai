@@ -1,15 +1,15 @@
-import { CFG, KEYBOARD_ROWS, TRACKED, NOISE_KEY, displayKey } from './config.js?v=15';
-import { AudioCapture } from './audio.js?v=15';
-import { getFilterbank, computeMelSpec } from './features.js?v=15';
-import { api } from './api.js?v=15';
-import { LegacyStore } from './legacy-store.js?v=15';
-import { initSamplesTab } from './samples.js?v=15';
+import { CFG, NOISE_KEY, keyChar, keyText, keyboardRows, loadKeyboardLayout } from './config.js?v=16';
+import { AudioCapture } from './audio.js?v=16';
+import { getFilterbank, computeMelSpec } from './features.js?v=16';
+import { api } from './api.js?v=16';
+import { LegacyStore } from './legacy-store.js?v=16';
+import { initSamplesTab } from './samples.js?v=16';
 import {
   setBadge, log, clearLog,
   buildKeyboardDOM, updateKeyboard, flashKey, updateRecordStats,
   drawWaveform, drawChart, drawCapture,
   renderConfidence, updatePredDisplay, updatePredStats, prependHistory,
-} from './ui.js?v=15';
+} from './ui.js?v=16';
 
 // Samples, training and prediction live in the Python backend; the browser
 // captures and cuts keystroke audio, shows progress and draws previews.
@@ -126,10 +126,14 @@ function stopWaveformLoop() {
 }
 
 // ─── Keyboard capture ─────────────────────────────────────────────────────────
+// Keys shown on the on-screen keyboard (set at init, once the layout is known)
+let tracked = new Set();
+
 document.addEventListener('keydown', e => {
   if (e.target.matches?.('input, select, textarea')) return;   // typing in a form field
-  const k = e.key === ' ' ? ' ' : e.key.toLowerCase();
-  if (!TRACKED.has(k)) return;
+  if (e.ctrlKey || e.altKey || e.metaKey) return;              // leave browser/OS shortcuts alone
+  const k = keyChar(e.code);
+  if (!tracked.has(k)) return;
   e.preventDefault();
   if (e.repeat) return;   // held key: auto-repeat events have no new sound
 
@@ -140,8 +144,7 @@ document.addEventListener('keydown', e => {
 
 document.addEventListener('keyup', e => {
   if (e.target.matches?.('input, select, textarea')) return;
-  const k = e.key === ' ' ? ' ' : e.key.toLowerCase();
-  if (!TRACKED.has(k)) return;
+  if (!tracked.has(keyChar(e.code))) return;
   const activeTab = document.querySelector('.tab-btn.active')?.dataset.tab;
   if (activeTab === 'record' && state.micActive && recordReleasesInput.checked) recordRelease(e.timeStamp);
 });
@@ -338,11 +341,10 @@ function updateTypeStatus() {
 
 function onBlindClick(cut) {
   api.predict(state.audio.sr, cut.audio).then(r => {
-    document.getElementById('type-last-key').textContent = displayKey(r.key);
-    renderConfidence(document.getElementById('type-conf-bars'), r.probs.map(p => p.p), r.probs.map(p => p.key));
     if (r.key === NOISE_KEY) return;   // classified as a non-keystroke sound — don't type it
     const out = document.getElementById('type-output');
-    out.value += r.key;
+    const t = keyText(r.key);
+    out.value = t === '\b' ? out.value.slice(0, -1) : out.value + t;
     out.scrollTop = out.scrollHeight;
   }).catch(e => {
     document.getElementById('type-status').textContent = 'Prediction failed: ' + e.message;
@@ -556,6 +558,10 @@ async function connectBackend() {
 }
 
 // ─── Init ─────────────────────────────────────────────────────────────────────
-buildKeyboardDOM(KEYBOARD_ROWS, document.getElementById('keyboard'));
-renderCounts();
+loadKeyboardLayout().then(() => {
+  const rows = keyboardRows();
+  tracked = new Set(rows.flat());
+  buildKeyboardDOM(rows, document.getElementById('keyboard'));
+  renderCounts();
+});
 connectBackend();

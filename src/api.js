@@ -1,4 +1,4 @@
-import { CFG } from './config.js?v=15';
+import { CFG } from './config.js?v=16';
 
 // Client for the Python backend (backend/keymic/api.py).
 // Audio goes over the wire as raw little-endian float32 PCM — the bytes of a

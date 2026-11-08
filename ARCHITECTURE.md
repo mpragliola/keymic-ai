@@ -34,6 +34,15 @@ Raw audio → log-mel spectrogram → per-band statistics the classifier learns 
 | Ring buffer | `Float32Array`, depth 4 s, written by a `ScriptProcessorNode` (chosen over `AudioWorklet` to avoid the HTTPS requirement) |
 | Keystroke cut | see §1.1.1 |
 
+**Keys.** A key is a physical position (`KeyboardEvent.code`) across the whole main
+block — letters, digits, punctuation, Backspace, Tab, Caps Lock, Enter and both Shifts —
+so Shift+1 is still the "1" key. Each is stored under one character: its unshifted
+character in the user's layout (`navigator.keyboard.getLayoutMap`, US layout as fallback),
+which keeps samples recorded under the earlier character-based scheme matching. Keys with
+no character, and `/` and `.` (which can't be a URL path segment), use private-use
+characters; `displayKey` and `keyText` in `src/config.js` map them back to labels and
+typed text. Ctrl/Alt/Meta combinations are ignored so browser shortcuts keep working.
+
 #### 1.1.1  Cutting the keystroke clip
 
 Audio reaches the ring buffer later than the key event (processing chunk of

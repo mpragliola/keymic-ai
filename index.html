@@ -43,55 +43,46 @@
 <!-- ══ Record panel ═══════════════════════════════════════════════════════════ -->
 <div id="tab-record" class="tab-panel active">
 
-  <div class="card">
-    <div class="card-title">Microphone</div>
-    <div class="btn-row">
+  <div class="card-row">
+    <div class="card">
+      <div class="card-title">Microphone</div>
       <button id="btn-mic" class="btn-primary">Enable mic</button>
+      <canvas id="waveform"></canvas>
+      <p id="record-stats">0 keys ready · 0 samples total</p>
+      <p id="capture-stats" class="small-note"></p>
+      <p id="record-error" class="small-note" style="color:var(--danger)"></p>
     </div>
-    <canvas id="waveform"></canvas>
-    <p id="record-stats">0 keys ready · 0 samples total</p>
-    <p id="capture-stats" style="font-size:12px;color:var(--muted);margin-top:4px">Latency: calibrating…</p>
-    <p id="record-error" style="font-size:12px;color:var(--danger);margin-top:4px"></p>
-  </div>
 
-  <div class="card">
-    <div class="card-title">Non-keystroke sounds</div>
-    <p style="font-size:12px;color:var(--muted);margin-bottom:10px">
-      The Type tab has to classify every loud sound it hears as something. Start capturing,
-      then go make a few mouse clicks, coughs, or desk taps — each transient above the
-      threshold is detected and stored automatically (same detector as the Type tab's
-      blind scan), and this gives it a "none of these" option instead of forcing those
-      sounds into one of the trained keys.
-    </p>
-    <div class="btn-row" style="align-items:center">
+    <div class="card">
+      <div class="card-title">Non-keystroke sounds</div>
+      <p class="small-note" style="margin-bottom:8px">
+        Mouse clicks, coughs, taps: lets the model answer "none of these". Start, make some noises, stop.
+      </p>
       <button id="btn-noise-collect-toggle" class="btn-primary">Start capturing</button>
-      <label style="font-size:12px;color:var(--muted);display:flex;gap:6px;align-items:center">
-        <input id="record-releases" type="checkbox" checked> Also store each key's release while recording
+      <label class="small-note check">
+        <input id="record-releases" type="checkbox" checked> Store key releases too
+      </label>
+      <p id="noise-count" class="small-note">0 recorded</p>
+    </div>
+
+    <div id="legacy-card" class="card" hidden>
+      <div class="card-title">Stored in this browser</div>
+      <p id="legacy-text" class="small-note" style="margin-bottom:8px"></p>
+      <div class="btn-row">
+        <button id="btn-legacy-upload" class="btn-primary">Upload</button>
+        <button id="btn-legacy-discard" class="btn-ghost">Discard</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">Last press</div>
+      <canvas id="capture-view"></canvas>
+      <label class="small-note check" title="Shaded: search window · grey: key event · dashed: threshold · green/red: click kept/ignored">
+        Threshold
+        <input id="threshold" type="range" min="2" max="20" step="1" style="flex:1;min-width:0">
+        <span id="threshold-val" style="font-family:var(--mono);width:40px"></span>
       </label>
     </div>
-    <p id="noise-count" style="font-size:12px;color:var(--muted);margin-top:6px">0 recorded</p>
-  </div>
-
-  <div id="legacy-card" class="card" hidden>
-    <div class="card-title">Samples stored in this browser</div>
-    <p id="legacy-text" style="font-size:12px;color:var(--muted);margin-bottom:10px"></p>
-    <div class="btn-row">
-      <button id="btn-legacy-upload" class="btn-primary">Upload to backend</button>
-      <button id="btn-legacy-discard" class="btn-ghost">Discard</button>
-    </div>
-  </div>
-
-  <div class="card">
-    <div class="card-title">Last press — energy around the key event (ms)</div>
-    <canvas id="capture-view" style="width:100%;height:110px;display:block;background:var(--bg);border-radius:4px"></canvas>
-    <p style="font-size:12px;color:var(--muted);margin-top:8px">
-      Shaded: search window · grey: key event · dashed: threshold · green/red: click kept/ignored
-    </p>
-    <label style="display:flex;gap:10px;align-items:center;font-size:12px;color:var(--muted);margin-top:8px">
-      Click threshold
-      <input id="threshold" type="range" min="2" max="20" step="1" style="flex:1">
-      <span id="threshold-val" style="font-family:var(--mono);width:44px"></span>
-    </label>
   </div>
 
   <div class="card">
@@ -105,7 +96,7 @@
       <button id="btn-clear" class="btn-danger">Delete samples</button>
     </div>
     <p style="margin-top:10px;color:var(--muted);font-size:12px">
-      Samples are stored by the backend (<code>backend/data</code>). The newest 50 per key are kept.<br>
+      Samples are stored by the backend (<code>backend/data</code>). The newest 1000 per key are kept.<br>
       Green keys have ≥ 8 samples. Yellow keys need more.
     </p>
   </div>
@@ -133,32 +124,38 @@
 <!-- ══ Train panel ════════════════════════════════════════════════════════════ -->
 <div id="tab-train" class="tab-panel">
 
-  <div class="card">
-    <div class="card-title">Train the classifier on recorded data</div>
-    <div class="btn-row" style="align-items:center">
-      <label style="font-size:12px;color:var(--muted);display:flex;gap:6px;align-items:center">
-        Epochs <input id="train-epochs" type="number" min="1" max="2000" class="num-input">
-      </label>
-      <label style="font-size:12px;color:var(--muted);display:flex;gap:6px;align-items:center">
-        <input id="train-resume" type="checkbox" disabled> Resume from current model
-      </label>
-      <button id="btn-train" class="btn-primary">Start training</button>
-      <button id="btn-stop-train" class="btn-ghost" disabled>Stop training</button>
-      <button id="btn-delete-model" class="btn-danger" disabled>Delete model</button>
-      <button id="btn-delete-samples" class="btn-danger">Delete samples</button>
+  <div class="card-row train-row">
+    <div class="card">
+      <div class="card-title">Train the classifier on recorded data</div>
+      <div class="btn-row" style="align-items:center">
+        <label class="small-note check">
+          Epochs <input id="train-epochs" type="number" min="1" max="2000" class="num-input">
+        </label>
+        <label class="small-note check">
+          <input id="train-resume" type="checkbox" disabled> Resume from current model
+        </label>
+      </div>
+      <div class="btn-row" style="margin-top:10px">
+        <button id="btn-train" class="btn-primary">Start training</button>
+        <button id="btn-stop-train" class="btn-ghost" disabled>Stop training</button>
+        <button id="btn-delete-model" class="btn-danger" disabled>Delete model</button>
+        <button id="btn-delete-samples" class="btn-danger">Delete samples</button>
+      </div>
+      <p class="small-note" style="margin-top:10px">
+        Requires ≥ 8 samples for each of ≥ 2 keys. Each key's most recent 20 % of samples are held
+        out for validation.
+      </p>
+      <p id="train-resume-note" class="small-note" style="margin-top:6px"></p>
+      <p id="train-progress" style="font-family:var(--mono);font-size:12px;margin-top:8px"></p>
     </div>
-    <p style="margin-top:10px;color:var(--muted);font-size:12px">
-      Requires ≥ 8 samples for each of ≥ 2 keys. Training runs on the backend's GPU and saves the
-      model there; progress updates live. 20 % of each key's samples are held out for validation.
-    </p>
-    <p id="train-resume-note" style="margin-top:6px;color:var(--muted);font-size:12px"></p>
+    <div class="card chart-card">
+      <canvas id="train-chart"></canvas>
+    </div>
   </div>
 
   <div class="card">
     <div class="card-title">Training log</div>
-    <p id="train-progress" style="font-family:var(--mono);font-size:12px;margin-bottom:8px"></p>
     <pre id="train-log"></pre>
-    <canvas id="train-chart"></canvas>
   </div>
 
 </div>
@@ -167,12 +164,13 @@
 <div id="tab-predict" class="tab-panel">
 
   <div class="card">
-    <div class="card-title">Live prediction — type to test</div>
-    <div class="btn-row" style="margin-bottom:12px">
+    <div class="btn-row" style="align-items:center">
       <button id="btn-mic-predict" class="btn-primary">Enable mic</button>
-      <span id="pred-status" style="color:var(--warning);font-size:12px;align-self:center"></span>
+      <button id="btn-reset-stats" class="btn-ghost">Reset stats</button>
+      <span id="pred-stats" class="small-note">0/0 correct (—%)</span>
+      <span id="pred-status" class="small-note" style="color:var(--warning)"></span>
     </div>
-    <div class="pred-main">
+    <div class="pred-compact">
       <div class="pred-big">
         <span class="pred-label">Predicted</span>
         <span id="pred-display" class="pred-char">—</span>
@@ -182,16 +180,8 @@
         <span id="pred-actual" class="pred-char" style="color:var(--muted)">—</span>
       </div>
       <div id="conf-bars" class="conf-bars"></div>
+      <div id="pred-history"></div>
     </div>
-    <p id="pred-stats" style="margin-top:12px;color:var(--muted);font-size:12px">0/0 correct (—%)</p>
-    <div class="btn-row" style="margin-top:12px">
-      <button id="btn-reset-stats" class="btn-ghost">Reset stats</button>
-    </div>
-  </div>
-
-  <div class="card">
-    <div class="card-title">Prediction history</div>
-    <div id="pred-history"></div>
   </div>
 
 </div>
@@ -214,28 +204,16 @@
       <button id="btn-type-clear" class="btn-ghost">Clear</button>
     </div>
     <p style="margin-top:10px;color:var(--muted);font-size:12px">
-      Every click loud enough to cross the Record tab's threshold is classified and appended,
-      whether or not it was an actual tracked key — so background noise above the threshold
-      shows up too. Keys the model wasn't trained on can't be produced; unrecognized sounds are
-      still guessed as the closest trained key.
+      Every click loud enough to cross the Record tab's threshold is classified; sounds classified
+      as non-keystroke (noise, key releases) are dropped. Keys the model wasn't trained on can't
+      be produced.
     </p>
-  </div>
-
-  <div class="card">
-    <div class="card-title">Last detected click</div>
-    <div class="pred-main">
-      <div class="pred-big">
-        <span class="pred-label">Key</span>
-        <span id="type-last-key" class="pred-char">—</span>
-      </div>
-      <div id="type-conf-bars" class="conf-bars"></div>
-    </div>
   </div>
 
 </div>
 
 <!-- App entry point (ES module) -->
-<script type="module" src="src/app.js?v=15"></script>
+<script type="module" src="src/app.js?v=16"></script>
 
 </body>
 </html>

@@ -1,4 +1,4 @@
-import { CFG } from './config.js?v=15';
+import { CFG } from './config.js?v=16';
 
 // Read access to samples recorded before the backend existed, when they were
 // kept in IndexedDB (localForage keys: ks-counts, ks-sr, ks-{key}). Used only

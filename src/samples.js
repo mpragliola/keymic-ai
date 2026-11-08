@@ -1,4 +1,4 @@
-import { displayKey } from './config.js?v=15';
+import { displayKey, escapeHtml } from './config.js?v=16';
 
 const PAGE_SIZE = 12;
 
@@ -32,7 +32,7 @@ export function initSamplesTab(deps) {
     const keys = Object.keys(counts).filter(k => counts[k] > 0).sort();
     const current = keySel.value;
     keySel.innerHTML = keys.map(k =>
-      `<option value="${k === ' ' ? 'SPACE' : k}">${displayKey(k)} (${counts[k]})</option>`).join('');
+      `<option value="${escapeHtml(k === ' ' ? 'SPACE' : k)}">${escapeHtml(displayKey(k))} (${counts[k]})</option>`).join('');
     if (keys.some(k => (k === ' ' ? 'SPACE' : k) === current)) keySel.value = current;
     await render();
   }

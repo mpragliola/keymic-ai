@@ -1,4 +1,4 @@
-import { CFG, displayKey } from './config.js?v=15';
+import { CFG, displayKey, escapeHtml, isNamedKey } from './config.js?v=16';
 
 // ─── Badge helpers ────────────────────────────────────────────────────────────
 export function setBadge(id, text, cls) {
@@ -29,7 +29,7 @@ export function buildKeyboardDOM(rows, container) {
     rowEl.className = 'kb-row';
     for (const k of row) {
       const btn = document.createElement('div');
-      btn.className = 'kb-key';
+      btn.className = 'kb-key' + (isNamedKey(k) ? ' kb-wide' : '');
       btn.id = `key-${k === ' ' ? 'space' : k}`;
       btn.dataset.key = k;
 
@@ -202,7 +202,7 @@ export function renderConfidence(container, probs, keys) {
     const row = document.createElement('div');
     row.className = 'conf-row';
     row.innerHTML = `
-      <span class="conf-key">${displayKey(k)}</span>
+      <span class="conf-key">${escapeHtml(displayKey(k))}</span>
       <div class="conf-bar-wrap"><div class="conf-bar" style="width:${(p * 100).toFixed(1)}%"></div></div>
       <span class="conf-pct">${(p * 100).toFixed(1)}%</span>`;
     container.append(row);
@@ -230,10 +230,10 @@ export function prependHistory(container, actualKey, predKey, probs, keys) {
   row.className = 'hist-row' + (actualKey === predKey ? ' correct' : ' wrong');
   const top2 = keys.map((k, i) => [k, probs[i]]).sort((a, b) => b[1] - a[1]).slice(0, 2);
   row.innerHTML = `
-    <span class="hist-actual">${displayKey(actualKey)}</span>
+    <span class="hist-actual">${escapeHtml(displayKey(actualKey))}</span>
     <span class="hist-arrow">→</span>
-    <span class="hist-pred">${displayKey(predKey)}</span>
-    <span class="hist-probs">${top2.map(([k, p]) => `${displayKey(k)} ${(p*100).toFixed(0)}%`).join(' · ')}</span>`;
+    <span class="hist-pred">${escapeHtml(displayKey(predKey))}</span>
+    <span class="hist-probs">${top2.map(([k, p]) => `${escapeHtml(displayKey(k))} ${(p*100).toFixed(0)}%`).join(' · ')}</span>`;
   container.prepend(row);
   // Keep list short
   while (container.children.length > 20) container.lastChild.remove();

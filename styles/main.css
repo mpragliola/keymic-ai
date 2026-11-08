@@ -87,6 +87,19 @@ header h1 {
 .tab-panel.active { display: block; }
 
 /* ── Shared card ─────────────────────────────────────────── */
+/* Several small cards side by side (Record tab top row, Train controls + chart) */
+.card-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 12px;
+  margin-bottom: 16px;
+}
+.card-row > .card { margin-bottom: 0; padding: 14px; min-width: 0; }
+.train-row { grid-template-columns: 1fr auto; }
+.small-note { font-size: 12px; color: var(--muted); margin-top: 6px; }
+.check { display: flex; gap: 6px; align-items: center; }
+#capture-view { width: 100%; height: 70px; display: block; background: var(--bg); border-radius: 4px; }
+
 .card {
   background: var(--surface);
   border: 1px solid var(--border);
@@ -127,7 +140,8 @@ button:disabled { opacity: .4; cursor: default; }
 /* ── Record tab ──────────────────────────────────────────── */
 #waveform {
   width: 100%;
-  height: 80px;
+  height: 56px;
+  margin-top: 10px;
   display: block;
   background: var(--bg);
   border-radius: 4px;
@@ -163,7 +177,8 @@ button:disabled { opacity: .4; cursor: default; }
   user-select: none;
 }
 
-.kb-key[data-key=" "] { min-width: 180px; }
+.kb-key[data-key=" "] { min-width: 260px; }
+.kb-key.kb-wide { min-width: 64px; }
 
 .key-label {
   font-family: var(--mono);
@@ -198,13 +213,8 @@ button:disabled { opacity: .4; cursor: default; }
   color: var(--muted);
 }
 
-#train-chart {
-  width: 100%;
-  max-width: 480px;
-  height: 160px;
-  display: block;
-  margin-top: 12px;
-}
+.chart-card { padding: 10px; display: flex; align-items: center; justify-content: center; }
+#train-chart { width: 200px; height: 200px; display: block; }
 
 /* ── Predict tab ─────────────────────────────────────────── */
 .pred-main {
@@ -232,7 +242,7 @@ button:disabled { opacity: .4; cursor: default; }
 
 .pred-char {
   font-family: var(--mono);
-  font-size: 3.5rem;
+  font-size: 2.6rem;
   font-weight: 700;
   line-height: 1;
   color: var(--accent);
@@ -241,11 +251,14 @@ button:disabled { opacity: .4; cursor: default; }
 
 .pred-char.correct { color: var(--success); }
 
-#pred-stats {
-  font-size: 13px;
-  color: var(--muted);
-  margin-top: 12px;
+.pred-compact {
+  display: grid;
+  grid-template-columns: auto auto minmax(180px, 1fr) minmax(180px, 1fr);
+  gap: 20px;
+  align-items: start;
+  margin-top: 14px;
 }
+@media (max-width: 700px) { .pred-compact { grid-template-columns: auto auto 1fr; } }
 
 /* ── Confidence bars ─────────────────────────────────────── */
 .conf-bars {
@@ -298,7 +311,7 @@ button:disabled { opacity: .4; cursor: default; }
   display: flex;
   flex-direction: column;
   gap: 4px;
-  max-height: 260px;
+  max-height: 170px;
   overflow-y: auto;
 }
 

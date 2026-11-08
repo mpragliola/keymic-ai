@@ -1,4 +1,4 @@
-import { CFG, KEYBOARD_ROWS, TRACKED, displayKey } from './config.js?v=15';
+import { CFG, KEYBOARD_ROWS, TRACKED, NOISE_KEY, displayKey } from './config.js?v=15';
 import { AudioCapture } from './audio.js?v=15';
 import { getFilterbank, computeMelSpec } from './features.js?v=15';
 import { api } from './api.js?v=15';
@@ -158,6 +158,8 @@ function renderCounts() {
   updateRecordStats(state.counts);
   const total = Object.values(state.counts).reduce((s, n) => s + n, 0);
   setBadge('badge-data', total ? `${total} samples` : 'no data', total ? 'green' : '');
+  const noiseEl = document.getElementById('noise-count');
+  if (noiseEl) noiseEl.textContent = `${state.counts[NOISE_KEY] || 0} recorded`;
 }
 
 async function refreshSamples() {
@@ -216,6 +218,28 @@ async function recordKey(k, eventTime) {
   }
 }
 
+// Captures whatever sound just happened (a mouse click, a cough, a desk tap — anything
+// that isn't a keystroke) and stores it under the NOISE_KEY sentinel. Unlike recordKey,
+// this is anchored to the button click itself rather than a keydown event, since there's
+// no keyboard event to anchor to.
+async function recordNoise() {
+  const cut = await state.audio.captureKeystroke();
+  updateCaptureStats(cut);
+  if (!cut.audio) { showRecordError('Not saved: no transient detected.'); return; }
+  try {
+    const r = await api.addSamples(NOISE_KEY, state.audio.sr, cut.audio);
+    state.counts[NOISE_KEY] = r.count;
+    state.sr = state.audio.sr;
+    renderCounts();
+    showRecordError('');
+  } catch (e) {
+    showRecordError('Not saved: ' + e.message);
+  }
+}
+
+const btnNoise = document.getElementById('btn-record-noise');
+if (btnNoise) btnNoise.addEventListener('click', recordNoise);
+
 // ─── Predict ─────────────────────────────────────────────────────────────────
 function updatePredStatus() {
   const el = document.getElementById('pred-status');
@@ -270,6 +294,7 @@ function onBlindClick(cut) {
   api.predict(state.audio.sr, cut.audio).then(r => {
     document.getElementById('type-last-key').textContent = displayKey(r.key);
     renderConfidence(document.getElementById('type-conf-bars'), r.probs.map(p => p.p), r.probs.map(p => p.key));
+    if (r.key === NOISE_KEY) return;   // classified as a non-keystroke sound — don't type it
     const out = document.getElementById('type-output');
     out.value += r.key;
     out.scrollTop = out.scrollHeight;

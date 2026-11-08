@@ -50,5 +50,11 @@ export const KEYBOARD_ROWS = [
 // All keys we track (flat set for O(1) lookup)
 export const TRACKED = new Set(KEYBOARD_ROWS.flat());
 
+// Reserved "this is not a keystroke" class — recorded manually (not via the physical
+// keyboard), so the model has somewhere to put a mouse click, cough, or desk tap instead
+// of being forced to call it one of the trained keys. Not a real keyboard key, so it's
+// outside TRACKED and never produced by keydown-driven recording/prediction.
+export const NOISE_KEY = '~';
+
 // Visual label for a key
-export const displayKey = k => k === ' ' ? 'SPC' : k.toUpperCase();
+export const displayKey = k => k === ' ' ? 'SPC' : k === NOISE_KEY ? 'NOISE' : k.toUpperCase();

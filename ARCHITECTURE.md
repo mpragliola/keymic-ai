@@ -56,8 +56,63 @@ Audio reaches the ring buffer later than the key event (processing chunk of
    one is searched too, so a wrong calibration corrects itself;
    the press is rejected if the peak is below the threshold (default 6 dB,
    adjustable on the Record tab, which also plots the envelope of the last press);
-5. returns 200 ms starting 20 ms before the peak, so every clip has its click
-   at the same position.
+5. refines that peak: a 5 ms energy window scores highest once it fully
+   contains the click's decay tail, which lands a few ms *after* the true
+   onset. `peakAmplitudeFrame` rescans the few ms around the coarse window
+   for the actual highest-amplitude sample and uses that instead — this is
+   what fixed the systematic "peak always comes a bit late" bias visible in
+   the Samples tab;
+6. returns 200 ms starting 20 ms before the refined peak, so every clip has
+   its click at the same position.
+
+The blind scanner (`AudioCapture.startBlindScan`, §1.1.3) applies the same
+`peakAmplitudeFrame` refinement to its own coarse hits.
+
+#### 1.1.2  Backend-side onset re-detection and the 100 ms feature window
+
+A keystroke has two acoustic events: the press and the release. The release's
+timing depends on how long the key is held, and in fast typing it can blur
+into the *next* key's press — so only the press should feed the model.
+`FEATURE_MS = 100` (`backend/keymic/config.py`) crops the input to a leading
+100 ms window, well clear of the release.
+
+Rather than trust where the browser's capture-time cut placed the click, the
+backend re-detects it directly from the stored raw clip, identically at train
+and predict time (`backend/keymic/onset.py`):
+
+1. high-pass filter (800 Hz, same cascaded-biquad design as the frontend);
+2. short-time energy envelope, background-percentile noise floor;
+3. the **earliest** point `ONSET_THRESHOLD_DB` (6 dB) above that background,
+   within the first `ONSET_SEARCH_MS` (100 ms) — earliest rather than loudest,
+   so a louder release (if the key was held a while) isn't mistaken for the
+   press;
+4. amplitude-refined to the exact peak sample, as in §1.1.1.
+
+The clip is then re-cropped to start `PRE_ONSET_MS` (20 ms) before that point
+and run through the usual 100 ms feature window. Every stored clip is still
+the full 200 ms `CAPTURE_MS` of raw audio, so this re-detection — and
+therefore the correction — applies to clips recorded before this existed,
+with no need to re-record anything.
+
+#### 1.1.3  Mic-only typing (blind scan)
+
+The Type tab classifies keystrokes with no keyboard events at all —
+`AudioCapture.startBlindScan` runs a continuous trailing-window energy scan
+(hop, background window, and refractory period all in `src/config.js`,
+`BLIND_*`) instead of the keydown-anchored capture in §1.1.1, with a
+refractory period after each detected click so its own decay tail isn't
+mistaken for a second click. Each detected click is sent to `/predict` the
+same way as the Predict tab.
+
+Because every loud sound in range gets classified as *something* — the
+model is a closed-set softmax over trained keys — a reserved sentinel class,
+`NOISE_KEY = '~'` (`src/config.js`), is recorded from the Record tab's
+"I just made a non-keystroke sound" button (anchored to the button click,
+not a keydown) for mouse clicks, coughs, and other non-keystroke transients.
+It's stored and trained like any other key (a single character, so it needs
+no special-casing in `backend/keymic/store.py`'s hex-encoded filenames); the
+Type tab just drops a prediction instead of appending it when the predicted
+key is `NOISE_KEY`.
 
 ### 1.2  STFT
 

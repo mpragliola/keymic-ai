@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>KeyMic — Acoustic Keystroke Classifier</title>
+
+  <!-- Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=JetBrains+Mono:wght@400;600;700&display=swap" rel="stylesheet">
+
+  <!-- TensorFlow.js -->
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.17.0/dist/tf.min.js"></script>
+
+  <!-- localForage (IndexedDB abstraction) -->
+  <script src="https://cdn.jsdelivr.net/npm/localforage@1.10.0/dist/localforage.min.js"></script>
+
+  <link rel="stylesheet" href="styles/main.css">
+</head>
+<body>
+
+<!-- ── Header ─────────────────────────────────────────────────────────────── -->
+<header>
+  <h1>🎹 KeyMic</h1>
+  <span id="badge-mic"   class="badge">mic off</span>
+  <span id="badge-data"  class="badge">no data</span>
+  <span id="badge-model" class="badge">no model</span>
+</header>
+
+<!-- ── Tabs ───────────────────────────────────────────────────────────────── -->
+<div class="tabs">
+  <button class="tab-btn active" data-tab="record">📡 Record</button>
+  <button class="tab-btn"        data-tab="train">🧠 Train</button>
+  <button class="tab-btn"        data-tab="predict">🎯 Predict</button>
+</div>
+
+<!-- ══ Record panel ═══════════════════════════════════════════════════════════ -->
+<div id="tab-record" class="tab-panel active">
+
+  <div class="card">
+    <div class="card-title">Microphone</div>
+    <div class="btn-row">
+      <button id="btn-mic" class="btn-primary">Enable mic</button>
+    </div>
+    <canvas id="waveform"></canvas>
+    <p id="record-stats">0 keys ready · 0 samples total</p>
+  </div>
+
+  <div class="card">
+    <div class="card-title">Keyboard — type keys to record</div>
+    <div id="keyboard"></div>
+  </div>
+
+  <div class="card">
+    <div class="card-title">Samples</div>
+    <div class="btn-row">
+      <button id="btn-clear" class="btn-danger">Delete samples</button>
+    </div>
+    <p style="margin-top:10px;color:var(--muted);font-size:12px">
+      Samples persist in IndexedDB across reloads. The model is kept separately.<br>
+      Green keys have ≥ 8 samples. Yellow keys need more.
+    </p>
+  </div>
+
+</div>
+
+<!-- ══ Train panel ════════════════════════════════════════════════════════════ -->
+<div id="tab-train" class="tab-panel">
+
+  <div class="card">
+    <div class="card-title">Train CNN on recorded data</div>
+    <div class="btn-row">
+      <button id="btn-train" class="btn-primary">Start training</button>
+      <button id="btn-stop-train" class="btn-ghost" disabled>Stop training</button>
+      <button id="btn-delete-model" class="btn-danger" disabled>Delete model</button>
+      <button id="btn-delete-samples" class="btn-danger">Delete samples</button>
+    </div>
+    <p style="margin-top:10px;color:var(--muted);font-size:12px">
+      Requires ≥ 8 samples for each of ≥ 2 keys. Training runs in-browser with TensorFlow.js and
+      saves the model to IndexedDB automatically.
+    </p>
+  </div>
+
+  <div class="card">
+    <div class="card-title">Training log</div>
+    <pre id="train-log"></pre>
+    <canvas id="train-chart"></canvas>
+  </div>
+
+</div>
+
+<!-- ══ Predict panel ══════════════════════════════════════════════════════════ -->
+<div id="tab-predict" class="tab-panel">
+
+  <div class="card">
+    <div class="card-title">Live prediction — type to test</div>
+    <div class="btn-row" style="margin-bottom:12px">
+      <button id="btn-mic-predict" class="btn-primary">Enable mic</button>
+      <span id="pred-status" style="color:var(--warning);font-size:12px;align-self:center"></span>
+    </div>
+    <div class="pred-main">
+      <div class="pred-big">
+        <span class="pred-label">Predicted</span>
+        <span id="pred-display" class="pred-char">—</span>
+      </div>
+      <div class="pred-big">
+        <span class="pred-label">Actual</span>
+        <span id="pred-actual" class="pred-char" style="color:var(--muted)">—</span>
+      </div>
+      <div id="conf-bars" class="conf-bars"></div>
+    </div>
+    <p id="pred-stats" style="margin-top:12px;color:var(--muted);font-size:12px">0/0 correct (—%)</p>
+    <div class="btn-row" style="margin-top:12px">
+      <button id="btn-reset-stats" class="btn-ghost">Reset stats</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-title">Prediction history</div>
+    <div id="pred-history"></div>
+  </div>
+
+</div>
+
+<!-- App entry point (ES module) -->
+<script type="module" src="src/app.js?v=9"></script>
+
+</body>
+</html>

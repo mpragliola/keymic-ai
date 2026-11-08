@@ -154,7 +154,11 @@ export function drawChart(canvas, chartData) {
   if (!chartData.trainAcc.length) return;
 
   const epochs = chartData.trainAcc.length;
-  const xScale = iW / Math.max(epochs - 1, 1);
+  // Scale the x-axis to the *planned* epoch count, not just how many have logged so
+  // far — otherwise 2 points early in a 60-epoch run get stretched edge to edge, and
+  // small, real changes between them look like a big swing across the whole width.
+  const span = Math.max((chartData.totalEpochs || epochs) - 1, 1);
+  const xScale = iW / span;
 
   const drawLine = (data, color) => {
     ctx.strokeStyle = color;
